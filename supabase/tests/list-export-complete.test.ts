@@ -680,8 +680,14 @@ describe("the ceiling: complete up to 10,000, refused past it", () => {
   }, 120_000);
 });
 
-describe("a list with no filters past the ceiling", () => {
-  it("10,001 of MY tasks: refused, and not told to narrow filters it does not have", async () => {
+// Until A02 (review 2026-10-18) My tasks had no filters, and this case pinned
+// the "no filters to narrow it" refusal. /tasks now has scope (mine /
+// delegated / team) and due (overdue / today / week / undated) filters that its
+// export reads, so a list past the ceiling is told to narrow them. The
+// unfiltered refusal is still the pipeline's and Viewings' (filterable: false),
+// pinned in lib/services/export-read.test.ts.
+describe("My tasks past the ceiling (filterable since A02)", () => {
+  it("10,001 of MY tasks: refused, and told to narrow the scope and due filters it now has", async () => {
     await pg.query(
       `insert into tasks (org_id, title, assignee_id, created_by)
        select $1::uuid, format('TS%s-%s', $2::text, lpad(g::text, 5, '0')), $3::uuid, $3::uuid
@@ -694,7 +700,8 @@ describe("a list with no filters past the ceiling", () => {
       console.log(`[evidence] 10001 tasks: status ${a.status}, reason ${a.json?.reason}, message "${a.json?.error}"`);
       expect(a.status).toBe(422);
       expect(a.json?.reason).toBe("too_many");
-      expect(a.json?.error).toMatch(/no filters to narrow it/);
+      expect(a.json?.error).toMatch(/narrow the filters and export again/);
+      expect(a.json?.error).not.toMatch(/no filters to narrow it/);
       expect((await exportedEvents(SIZE_ORG)).count).toBe(before.count);
     } finally {
       await pg.query("delete from tasks where org_id = $1", [SIZE_ORG]);

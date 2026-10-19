@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 151::bigint as migrations,
+    2::bigint as auth_users, 155::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -200,6 +200,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
+  -- 0153: the dashboard's Inventory card — SECURITY INVOKER like
+  -- admin_dashboard_stats, never anon (pinned although invokers are out of grant_unpinned's scope)
+  ('property_inventory_counts', false, false, true, true),
   -- reporting engine (0065) — SECURITY INVOKER by design (the MV lesson)
   ('report_agent_performance', false, false, true, true),
   ('report_source_roi',        false, false, true, true),
@@ -322,6 +325,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- 0145: a session may not delete a paid instalment line — an invoker
   -- trigger body, revoked from all four roles explicitly like the guards above
   ('trg_installment_paid_kept',        false, false, false, false),
+  -- 0152: has_storage is derived from the storage_room feature — an invoker
+  -- trigger body, revoked from all four roles explicitly like the guards above
+  ('trg_property_storage_from_features', false, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -1049,6 +1055,108 @@ misc as (
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc) > 0
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc)
                  < position('insert into' in p.prosrc))::text
+  union all
+  -- 0152: storage room has ONE value, the 'storage_room' key in
+  -- properties.features; has_storage is its mirror, kept for the public
+  -- feed's shape and derived on every write by properties_storage_from_features
+  -- — an enabled BEFORE INSERT OR UPDATE OF (features, has_storage) row
+  -- trigger calling the invoker body whose one assignment is the derived
+  -- value. A restore that lost or disabled the trigger, narrowed its columns,
+  -- brought back a body that keeps a written has_storage, or loaded rows whose
+  -- two values disagree (a replica-mode load fires no trigger) reads otherwise.
+  select 'INTEGRITY: storage room has one value — has_storage derived from the storage_room feature by its trigger, no row out of step (0152)', 'true 0',
+         (exists (select 1 from pg_trigger t
+                   where t.tgrelid = 'public.properties'::regclass and t.tgname = 'properties_storage_from_features'
+                     and t.tgfoid = to_regprocedure('public.trg_property_storage_from_features()')
+                     and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null and t.tgnargs = 0
+                     and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 4) = 4 and (t.tgtype & 16) = 16
+                     and (t.tgtype & (8 | 32 | 64)) = 0
+                     and (select array_agg(a order by a) from unnest(t.tgattr::int2[]) a)
+                         = (select array_agg(c.attnum order by c.attnum) from pg_attribute c
+                             where c.attrelid = 'public.properties'::regclass
+                               and c.attname in ('features', 'has_storage') and not c.attisdropped))
+          and coalesce((select not p.prosecdef
+                               and c.code ~ 'new\.has_storage := coalesce\(''storage_room'' = any\(new\.features\), false\);\s+return new;\s+end\s*$'
+                               and regexp_count(c.code, 'new\.has_storage') = 1
+                          from pg_proc p
+                          cross join lateral (select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') as code) c
+                         where p.oid = to_regprocedure('public.trg_property_storage_from_features()')), false))::text
+         || ' ' ||
+         (select count(*) from public.properties p
+           where p.has_storage is distinct from coalesce('storage_room' = any(p.features), false))::text
+  union all
+  -- 0154: the lead-source report keeps spam out of both sides of its convert
+  -- rate and divides its win rate within one scope (won / converted_visible,
+  -- the deals the caller can read); the stage report keys a row on
+  -- (pipeline, stage id), splits departures by the stages' order and counts
+  -- closes per pipeline. A restore that brought back 0076's / 0130's bodies
+  -- reads 'false false'; the 0130 HONESTY row above still holds for 0154's.
+  select 'HONESTY: lead sources keep spam out of the convert rate and the win rate in one scope; stage conversion is per pipeline, stage id and direction (0154)', 'true true',
+         coalesce((select (p.prosrc ~ 'count\(l\.converted_deal_id\) filter \(where l\.status <> ''spam''\)'
+                           and p.prosrc ~ 'then converted_not_spam::numeric / \(leads - spam\) end'
+                           and p.prosrc ~ 'then won::numeric / converted_visible end'
+                           and p.prosrc ~ 'count\(d\.id\)\s+as converted_visible')::text
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.report_source_roi(timestamptz, timestamptz)')), 'false') || ' ' ||
+         coalesce((select (p.prosrc ~ '''stage_key'',\s+''id'''
+                           and p.prosrc ~ 'when sf\.deal_type = st\.deal_type and st\.sort_order > sf\.sort_order then ''forward'''
+                           and p.prosrc ~ 'when sf\.deal_type = st\.deal_type and st\.sort_order < sf\.sort_order then ''backward'''
+                           and p.prosrc ~ 'e\.to_stage_id is not distinct from m\.from_stage_id'
+                           and p.prosrc ~ '''outcomes_by_type''')::text
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.report_stage_conversion(timestamptz, timestamptz)')), 'false')
+  union all
+  -- 0153: the dashboard's Inventory card counts exactly the properties list's
+  -- default scope — live = not archived AND not withdrawn — per kind and
+  -- status, as a STABLE SECURITY INVOKER (the caller's RLS is its tenant
+  -- boundary). Its grants are the grants_expected row above; this reads the
+  -- shape and the body (whitespace folded). A restore that lost the function,
+  -- made it a definer, or brought back a predicate that counts withdrawn or
+  -- archived rows (0093's) reads false.
+  select 'INTEGRITY: the dashboard''s inventory counts the properties list''s default scope, per kind and status (0153)', 'true',
+         (exists (select 1 from pg_proc p
+                   where p.oid = to_regprocedure('public.property_inventory_counts()')
+                     and not p.prosecdef and p.provolatile = 's' and p.proretset
+                     and p.proargnames = array['kind', 'status', 'n']
+                     and p.proallargtypes = array['public.property_kind'::regtype, 'public.property_status'::regtype, 'bigint'::regtype]::oid[]
+                     and btrim(regexp_replace(p.prosrc, '\s+', ' ', 'g'))
+                         = 'select p.kind, p.status, count(*) as n from public.properties p where p.visibility <> ''archived'' and p.status <> ''withdrawn'' group by p.kind, p.status order by p.kind, p.status'))::text
+  union all
+  -- 0155: a logged conversation's outcome (spoke / message sent, no reply yet
+  -- / client replied) is one of three words for every writer (a validated
+  -- CHECK), is fixed with its note (the BEFORE trigger refuses a rewrite) and
+  -- rides in its conversation_logged event (the AFTER trigger); and
+  -- log_conversation is the ONE function of that name — SECURITY INVOKER,
+  -- p_outcome defaulted (the deployed four-argument call resolves), stored on
+  -- the note, closed to anon. A restore that lost the CHECK or its
+  -- validation, a guard, the payload, a trigger, or brought back 0094's
+  -- function beside or instead of this one reads otherwise.
+  select 'INTEGRITY: a logged conversation''s outcome is one of three, fixed with its note and carried by its event; one invoker log_conversation, closed to anon (0155)', 'true true true true',
+         (exists (select 1 from pg_constraint c
+                   where c.conrelid = to_regclass('public.interaction_notes') and c.conname = 'interaction_notes_outcome_check'
+                     and c.contype = 'c' and c.convalidated
+                     and pg_get_constraintdef(c.oid) = 'CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY[''spoke''::text, ''message_sent''::text, ''client_replied''::text]))))'))::text || ' ' ||
+         coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'if new\.outcome is distinct from old\.outcome then\s+raise exception'
+                          and exists (select 1 from pg_trigger t
+                                       where t.tgrelid = to_regclass('public.interaction_notes') and t.tgfoid = p.oid
+                                         and t.tgname = 'interaction_notes_before' and t.tgenabled = 'O' and t.tgtype = 23)
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.trg_interaction_notes_before()')), false)::text || ' ' ||
+         coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'jsonb_build_object\(''outcome'', new\.outcome\)'
+                          and exists (select 1 from pg_trigger t
+                                       where t.tgrelid = to_regclass('public.interaction_notes') and t.tgfoid = p.oid
+                                         and t.tgname = 'interaction_notes_after_insert' and t.tgenabled = 'O' and t.tgtype = 5)
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.trg_interaction_notes_after_insert()')), false)::text || ' ' ||
+         ((select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'log_conversation') = 1
+          and coalesce((select not p.prosecdef
+                               and p.proargnames = array['p_entity_type', 'p_entity_id', 'p_channel', 'p_note', 'p_outcome']
+                               and p.pronargdefaults = 1
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'values \(v_org, p_entity_type, p_entity_id, p_channel, btrim\(p_note\), p_outcome\)'
+                               and not has_function_privilege('anon', p.oid, 'execute')
+                               and has_function_privilege('authenticated', p.oid, 'execute')
+                          from pg_proc p
+                         where p.oid = to_regprocedure('public.log_conversation(text, uuid, public.comm_channel, text, text)')), false))::text
   union all
   -- 0150 / 0151: a portal feed opens only with its URL's token. Five counts,
   -- each named in the row:

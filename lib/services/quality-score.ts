@@ -46,9 +46,30 @@ import type { Database } from "@/lib/supabase/database.types";
  * computes fresh on render, but the list and the CSV read the column, so the
  * two would disagree until each property was next saved. `npm run
  * recompute:scores` exists for exactly this.
+ *
+ * WEBSITE ESSENTIALS (F03, 2026-10-19). One number was doing three jobs: how
+ * complete a listing is, whether it may go public, and — read by the
+ * dashboard as "clears the threshold" — whether it is fit to market. The
+ * threshold is compensatory, so a listing with NO photograph at all reaches
+ * 85 on paperwork (deed, permit, mandate, agent, party) and passed every
+ * screen in green. Three items are what the website cannot show a listing
+ * without — a picture, a name, a price (for a container, priced units) — and
+ * the result reports them APART from the score (`essentialsMissing`), so a
+ * screen can say "public without a cover photo" instead of "85, fine". The
+ * weights and every stored score are unchanged (no recompute). Whether a
+ * missing essential BLOCKS publishing is an open operator decision (BACKLOG
+ * LST-09); until it is taken the gate stays the score alone — reporting is
+ * not gating, and nothing unpublishes on its own.
  */
 
 export const PUBLISH_THRESHOLD = 70;
+
+/**
+ * What the website needs to show a listing at all, by item key (F03). A
+ * container's `price` is "Units priced"; its "At least one unit" is enforced
+ * by the publish gate's non-overridable refusal, not reported here.
+ */
+export const WEBSITE_ESSENTIALS = ["cover", "title_en", "price"] as const;
 
 // What counts as a unit lives in ONE place (2026-09-02 review): a phase is
 // not a unit, and a project's units may sit under its phases. RELATIVE and
@@ -107,6 +128,8 @@ export interface QualityScoreItem {
   label: string;
   points: number;
   earned: boolean;
+  /** one of WEBSITE_ESSENTIALS: the site cannot present the listing without it (F03) */
+  essential?: true;
 }
 
 /** Something the desk should know that moves no points. */
@@ -120,6 +143,12 @@ export interface QualityScoreResult {
   score: number;
   items: QualityScoreItem[];
   missing: QualityScoreItem[];
+  /**
+   * The missing items that are website essentials (F03) — a subset of
+   * `missing`, reported apart so an 85-point listing with no picture is said
+   * to have no picture. Moves no points of its own.
+   */
+  essentialsMissing: QualityScoreItem[];
   warnings: QualityScoreWarning[];
 }
 
@@ -198,6 +227,11 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
       earned: input.hasOwnerOrDeveloper,
     },
   ];
+  // F03: the essentials are flagged from the ONE list, not item by item, so
+  // the set a screen reports and the set this file marks cannot differ
+  for (const item of items) {
+    if ((WEBSITE_ESSENTIALS as readonly string[]).includes(item.key)) item.essential = true;
+  }
 
   const score = items.reduce((sum, item) => sum + (item.earned ? item.points : 0), 0);
   // 0088: a shared photograph is said, never scored — see sharedPhotoWith.
@@ -216,7 +250,14 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
   if (input.buildConflict) {
     warnings.push({ key: "build_conflict", label: input.buildConflict, references: [] });
   }
-  return { score, items, missing: items.filter((i) => !i.earned), warnings };
+  const missing = items.filter((i) => !i.earned);
+  return {
+    score,
+    items,
+    missing,
+    essentialsMissing: missing.filter((i) => i.essential === true),
+    warnings,
+  };
 }
 
 /**
@@ -253,12 +294,21 @@ export interface QualityScoreSource {
 /**
  * Build the score input from a row plus its media and mandate facts.
  *
- * ONE DEFINITION, TWO CALLERS. `recomputeQualityScore` scores a single property
- * from three per-property queries; the worklist scores a whole list from three
- * queries TOTAL. If each built its own input they would drift, and the drift
- * would be invisible — a worklist saying "12 missing coordinates" while the
- * detail pages disagree is worse than no worklist, because it looks
- * authoritative. Every rule lives here.
+ * ONE DEFINITION, FOUR CALLERS. `recomputeQualityScore` scores a single
+ * property from three per-property queries; the worklist (and the dashboard's
+ * Listing health, which reads the worklist) scores a whole list from two
+ * paged reads; the detail page scores the row it rendered (F07); the publish
+ * gate scores the row as it WOULD be after the save (F03). If each built its
+ * own input they would drift, and the drift would be invisible — a worklist
+ * saying "12 missing coordinates" while the detail pages disagree is worse
+ * than no worklist, because it looks authoritative. The page and the gate did
+ * build their own, and the page's already had drifted (it counted a centroid
+ * as an exact location). Every rule lives here, and
+ * tests/unit/one-quality-input-builder.test.ts refuses a second copy.
+ *
+ * `!= null`, not `!== null`: the gate passes the row merged with the save's
+ * pending updates, and a column that update spells as `undefined` is no more
+ * set than a null one. For a row read from the database the two agree.
  */
 export function buildQualityInput(
   p: QualityScoreSource,
@@ -286,19 +336,19 @@ export function buildQualityInput(
     sharedPhotoWith: facts.sharedPhotoWith ?? [],
     titleEn: (p.title as { en?: string } | null)?.en,
     publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
-    hasPrice: p.asking_price !== null || p.rent_price_month !== null,
-    hasArea: isLand ? p.plot_area_sqm !== null : p.covered_area_sqm !== null,
-    hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
+    hasPrice: p.asking_price != null || p.rent_price_month != null,
+    hasArea: isLand ? p.plot_area_sqm != null : p.covered_area_sqm != null,
+    hasBedroomsAndBathrooms: p.bedrooms != null && p.bathrooms != null,
     hasPlanningZoneAndDensity:
-      p.planning_zone_code !== null && p.building_density_pct !== null,
+      p.planning_zone_code != null && p.building_density_pct != null,
     // 0054: a centroid taken as a stand-in is NOT an exact map location. Ten
     // points for a coordinate nobody surveyed would make this score a lie.
-    hasCoords: p.location !== null && !p.location_approx,
+    hasCoords: p.location != null && !p.location_approx,
     titleDeedSet: p.title_deed_status !== "unknown",
     permitSet: p.permit_status !== "unknown",
     mandateActive: facts.mandateActive,
-    hasAssignedAgent: p.assigned_agent_id !== null,
-    hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
+    hasAssignedAgent: p.assigned_agent_id != null,
+    hasOwnerOrDeveloper: p.owner_contact_id != null || p.developer_contact_id != null,
     buildConflict: buildProgress(
       p.construction_status ?? null,
       p.delivery_date ?? null,

@@ -714,7 +714,7 @@ export async function saveNudgeThresholds(
   // RLS filters a denied update to zero rows rather than erroring, and 0052's
   // row could also have been deleted — either way this must not claim success.
   if (!updated?.length) {
-    return fail("Nudge thresholds are not configured on this database — re-run migration 0052.");
+    return fail("This setting is missing — contact support (technical: migration 0052).");
   }
 
   await logEvent(supabase, {
@@ -864,7 +864,7 @@ export async function saveLeadRouting(
   // RLS filters a denied update to zero rows rather than erroring, and 0098's
   // row could also have been deleted — either way this must not claim success.
   if (!updated?.length) {
-    return fail("Lead routing is not configured on this database — re-run migration 0098.");
+    return fail("This setting is missing — contact support (technical: migration 0098).");
   }
 
   await logEvent(supabase, {
@@ -960,7 +960,7 @@ export async function saveLeadEscalation(
   // RLS filters a denied update to zero rows rather than erroring, and 0107's
   // row could also have been deleted — either way this must not claim success.
   if (!updated?.length) {
-    return fail("Lead escalation is not configured on this database — re-run migration 0107.");
+    return fail("This setting is missing — contact support (technical: migration 0107).");
   }
 
   await logEvent(supabase, {

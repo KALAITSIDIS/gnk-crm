@@ -61,11 +61,14 @@ export function BrandingUpload({
   title,
   hint,
   currentUrl,
+  unreadable = false,
 }: {
   kind: "logo" | "watermark";
   title: string;
   hint: string;
   currentUrl: string | null;
+  /** the branding listing failed: whether one is uploaded is unknown, never "not uploaded" */
+  unreadable?: boolean;
 }) {
   // refused before sending past the action's own 2 MB cap — a larger PNG used
   // to reach Vercel's ~4.5 MB 413 and the error boundary — and a lost answer
@@ -91,6 +94,8 @@ export function BrandingUpload({
           alt={`Current ${title.toLowerCase()}`}
           className="h-16 w-fit max-w-56 rounded border border-border bg-surface-2 object-contain p-1"
         />
+      ) : unreadable ? (
+        <p className="text-xs text-warning">Could not check whether one is uploaded — reload the page.</p>
       ) : (
         <p className="text-xs text-text-3">Not uploaded yet.</p>
       )}

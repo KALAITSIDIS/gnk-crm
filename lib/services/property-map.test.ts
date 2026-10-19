@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   boundsOf,
+  featurePriceText,
+  MAP_SLOW_AFTER_MS,
+  mapErrorOutcome,
+  mapFailureReason,
+  PINS_SOURCE_ID,
+  placementSummary,
   resolvePosition,
+  startVisibleTimer,
   toGeoJson,
   type MappableProperty,
 } from "./property-map";
@@ -235,5 +242,156 @@ describe("a STORED centroid is still approximate (0054)", () => {
       ["a", "approximate"],
       ["b", "exact"],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F08 — when the map cannot draw
+// ---------------------------------------------------------------------------
+
+/** What MapLibre 6.9 throws from the Map constructor when there is no WebGL2
+ *  context (maplibre-gl-dev.mjs: `this.name = "GPUInitializationError"`). */
+class GPUInitializationError extends Error {
+  constructor() {
+    super("WebGL2 is required to display this map.");
+    this.name = "GPUInitializationError";
+  }
+}
+
+describe("mapFailureReason", () => {
+  it("calls a missing WebGL2 context the browser's environment, not a fault", () => {
+    expect(mapFailureReason(new GPUInitializationError())).toBe("unsupported");
+  });
+
+  it("matches by name, so a minified or second copy of the class still counts", () => {
+    expect(mapFailureReason({ name: "GPUInitializationError", message: "x" })).toBe("unsupported");
+  });
+
+  it("calls anything else a failure", () => {
+    expect(mapFailureReason(new Error("boom"))).toBe("failed");
+    expect(mapFailureReason(new TypeError("Failed to fetch dynamically imported module"))).toBe("failed");
+    expect(mapFailureReason("a string")).toBe("failed");
+    expect(mapFailureReason(null)).toBe("failed");
+    expect(mapFailureReason(undefined)).toBe("failed");
+  });
+});
+
+describe("mapErrorOutcome", () => {
+  const styleError = { error: new Error("AJAXError: Failed to fetch (0): https://tiles.openfreemap.org/styles/liberty") };
+  const tileError = {
+    error: new Error("AJAXError: Failed to fetch (0)"),
+    sourceId: "openmaptiles",
+    tile: { tileID: {} },
+  };
+
+  it("an error naming no source before the style loaded is the style itself: the map failed", () => {
+    expect(mapErrorOutcome(styleError, false)).toBe("failed");
+  });
+
+  it("a basemap tile or source error is never a failure — one bad tile must not take the map away", () => {
+    expect(mapErrorOutcome(tileError, false)).toBeNull();
+    expect(mapErrorOutcome(tileError, true)).toBeNull();
+    expect(mapErrorOutcome({ error: new Error("x"), sourceId: "openmaptiles" }, false)).toBeNull();
+  });
+
+  it("after the style loaded the pins are up: sprite, glyph and tile errors do not stop the map", () => {
+    expect(mapErrorOutcome(styleError, true)).toBeNull();
+  });
+
+  it("an error from the pins' own source stops the map, before or after the style — the pins will not draw", () => {
+    // MapLibre's GeoJSON worker answered the load with an error: the source then
+    // reads loaded, and the map used to report its pins drawn (F08 review)
+    const pins = { error: new Error("worker: cannot parse"), sourceId: PINS_SOURCE_ID };
+    expect(mapErrorOutcome(pins, true)).toBe("failed");
+    expect(mapErrorOutcome(pins, false)).toBe("failed");
+    // a tile of the pins' source is the pins too
+    expect(mapErrorOutcome({ ...pins, tile: {} }, true)).toBe("failed");
+    // …and a basemap source is still not ours
+    expect(mapErrorOutcome({ error: new Error("x"), sourceId: "openmaptiles", tile: {} }, true)).toBeNull();
+  });
+
+  it("a WebGL context MapLibre could not get back stops the map at any time", () => {
+    expect(mapErrorOutcome({ error: new GPUInitializationError() }, true)).toBe("unsupported");
+    expect(mapErrorOutcome({ error: new GPUInitializationError() }, false)).toBe("unsupported");
+  });
+});
+
+describe("featurePriceText", () => {
+  it("is the popup's wording: a sale price, a rent per month, a dash for none", () => {
+    expect(featurePriceText(450000, false)).toBe("€450.000");
+    expect(featurePriceText(1200, true)).toBe("€1.200 / month");
+    expect(featurePriceText(null, false)).toBe("—");
+    expect(featurePriceText(null, true)).toBe("—");
+  });
+
+  it("shows a typed 0 as a price, never as missing", () => {
+    expect(featurePriceText(0, false)).toBe("€0");
+  });
+});
+
+describe("placementSummary", () => {
+  it("says how many are on the map and how many have no location", () => {
+    expect(placementSummary(12, 3)).toBe("12 on the map · 3 without a location");
+  });
+
+  it("states a zero rather than leaving the half out — none dropped is a fact too", () => {
+    expect(placementSummary(5, 0)).toBe("5 on the map · 0 without a location");
+    expect(placementSummary(0, 0)).toBe("0 on the map · 0 without a location");
+  });
+});
+
+describe("startVisibleTimer — the slow-map watchdog counts VISIBLE time only", () => {
+  let visible = true;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    visible = true;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fires once the visible time is up, and only once", () => {
+    const onElapsed = vi.fn();
+    startVisibleTimer(MAP_SLOW_AFTER_MS, () => visible, onElapsed);
+    vi.advanceTimersByTime(MAP_SLOW_AFTER_MS - 1_000);
+    expect(onElapsed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1_000);
+    expect(onElapsed).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(MAP_SLOW_AFTER_MS * 4);
+    expect(onElapsed).toHaveBeenCalledTimes(1);
+  });
+
+  // The 2026-08-20 trap: a hidden tab never runs requestAnimationFrame, so a
+  // working map draws nothing there. A wall-clock timer would call it slow.
+  it("never fires while the tab stays hidden, however long", () => {
+    const onElapsed = vi.fn();
+    visible = false;
+    startVisibleTimer(MAP_SLOW_AFTER_MS, () => visible, onElapsed);
+    vi.advanceTimersByTime(60 * 60 * 1_000);
+    expect(onElapsed).not.toHaveBeenCalled();
+  });
+
+  it("pauses while hidden and resumes counting from where it stood", () => {
+    const onElapsed = vi.fn();
+    startVisibleTimer(MAP_SLOW_AFTER_MS, () => visible, onElapsed);
+    vi.advanceTimersByTime(10_000); // 10 s visible
+    visible = false;
+    vi.advanceTimersByTime(10 * 60 * 1_000); // ten minutes in the background
+    expect(onElapsed).not.toHaveBeenCalled();
+    visible = true;
+    vi.advanceTimersByTime(4_000); // 14 s visible in all
+    expect(onElapsed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1_000); // 15 s
+    expect(onElapsed).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops for good when stopped — the pins drew, or the page left", () => {
+    const onElapsed = vi.fn();
+    const stop = startVisibleTimer(MAP_SLOW_AFTER_MS, () => visible, onElapsed);
+    vi.advanceTimersByTime(MAP_SLOW_AFTER_MS - 1_000);
+    stop();
+    vi.advanceTimersByTime(MAP_SLOW_AFTER_MS * 2);
+    expect(onElapsed).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

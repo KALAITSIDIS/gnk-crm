@@ -1,14 +1,15 @@
+import { cache, Fragment, type ReactNode } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Calculator, Copy } from "lucide-react";
+import { Calculator, Copy } from "lucide-react";
 import {
   DetailsForm,
   LegalForm,
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
-import type { VatConfigRow } from "@/lib/services/vat";
+import { purchaseCostsHref, type VatConfigRow } from "@/lib/services/vat";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
-import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { PartiesForm } from "@/components/features/properties/parties-form";
 import { MediaTab } from "@/components/features/properties/media-tab";
@@ -26,10 +27,19 @@ import {
   MandatePanel,
   type MandateRow,
 } from "@/components/features/properties/mandate-panel";
-import { EventTimeline } from "@/components/features/shared/event-timeline";
+import { ActivityFeed } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
-import { computeQualityScore } from "@/lib/services/quality-score";
-import { buildProgress } from "@/lib/services/construction";
+import { ListingReadiness } from "@/components/features/properties/listing-readiness";
+import { PropertySummary } from "@/components/features/properties/property-summary";
+import { PropertyTabs } from "@/components/features/properties/property-tabs";
+import { PropertyBreadcrumb } from "@/components/features/properties/property-breadcrumb";
+import { fetchLineage } from "@/lib/queries/property-lineage";
+import { kindLabel, matrixParent } from "@/lib/services/property-lineage";
+import { buildQualityInput, computeQualityScore } from "@/lib/services/quality-score";
+import { fetchBuildConflictSource } from "@/lib/queries/quality-worklist";
+import { propertyTabFrom } from "@/lib/services/property-tabs";
+import { landOverviewFacts } from "@/lib/services/property-layout";
+import { priceLine } from "@/lib/services/property-summary";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -42,7 +52,6 @@ import { MandateBadge, type MandateBadgeState } from "@/components/features/shar
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PropertyTabs } from "@/components/features/properties/property-tabs";
 import { MatchingBuyersCard } from "@/components/features/properties/matching-buyers-card";
 import { PortalsCard } from "@/components/features/properties/portals-card";
 import {
@@ -58,23 +67,43 @@ import type { MatchCandidate } from "@/lib/services/matching";
 import { buildPropertyPortalRows } from "@/lib/services/portals/property-portals";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
-import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
-import { readEntityTimeline } from "@/lib/services/entity-timeline";
+import { formatArea, formatDate, formatDateTime } from "@/lib/utils/format";
+import { readEntityTimelines } from "@/lib/services/entity-timeline";
+import { readRecordViewingIds } from "@/lib/queries/record-viewing-ids";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 
-/** The tabs below, in order — what `?tab=` may name. */
-const PROPERTY_TABS = [
-  "overview",
-  "details",
-  "legal",
-  "marketing",
-  "media",
-  "mandate",
-  "documents",
-  "reservation",
-  "buyers",
-  "activity",
-] as const;
+/**
+ * The property row, read ONCE per request for both generateMetadata and the
+ * page (React cache(): memoised for the request in a server render, a plain
+ * call anywhere else). Keyed by the id alone — each call makes its own
+ * request-scoped client from the same cookies, so the caller's RLS applies.
+ */
+const readProperty = cache(async (id: string) => {
+  const supabase = await createClient();
+  return supabase.from("properties").select("*, districts(name), areas(name)").eq("id", id).maybeSingle();
+});
+
+/**
+ * The browser tab names the record by its REFERENCE only (A08): no title, no
+ * owner's or buyer's name — tab titles land in browser history on shared
+ * devices. Never throws: a malformed id, an unreadable row or a failed read
+ * leaves the default title, and the page itself 404s or renders the error
+ * boundary on the same answer.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  if (!isGuid(id)) return {};
+  try {
+    const { data } = await readProperty(id);
+    return data ? { title: data.reference } : {};
+  } catch {
+    return {};
+  }
+}
 
 export default async function PropertyDetailPage({
   params,
@@ -82,7 +111,7 @@ export default async function PropertyDetailPage({
 }: {
   params: Promise<{ id: string }>;
   /** `?recorded=failed` — the wizard created the listing but could not write its event (OPS-01) */
-  /** `?tab=` — open on that tab (a portal reason's "Fix" link); anything unknown opens Overview */
+  /** `?tab=` — open on that tab (a "Fix" link: portals, the worklist, the readiness panel); anything unknown opens Overview (lib/services/property-tabs.ts) */
   searchParams: Promise<{ recorded?: string; tab?: string }>;
 }) {
   const { id } = await params;
@@ -91,17 +120,17 @@ export default async function PropertyDetailPage({
   if (!isGuid(id)) notFound();
   const query = await searchParams;
   const notRecorded = query.recorded === "failed";
-  const initialTab = PROPERTY_TABS.find((t) => t === query.tab) ?? "overview";
+  const initialTab = propertyTabFrom(query.tab);
   const supabase = await createClient();
+  // one clock for the request: the upcoming-viewings window, the next action
+  // and the mandate's expiry are all judged against the same instant
+  const now = new Date();
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
   // policy and commission columns are masked in the view (doc 04, T4.5)
   const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes] = await Promise.all([
-    supabase
-      .from("properties")
-      .select("*, districts(name), areas(name)")
-      .eq("id", id)
-      .maybeSingle(),
+    // shared with generateMetadata (one read per request)
+    readProperty(id),
     supabase.from("areas").select("id, district_id, name"),
     supabase
       .from("property_media")
@@ -171,14 +200,15 @@ export default async function PropertyDetailPage({
   const keyIds = keyRows.map((k) => k.id);
   const [
     priceRes,
-    eventsRes,
-    keyEventsRes,
+    timeline,
     viewingsRes,
     documentsRes,
     reservationsRes,
     installmentsRes,
     plansRes,
     vatConfigRes,
+    lineage,
+    nextTaskRes,
   ] = await Promise.all([
     supabase
       .from("price_history")
@@ -186,37 +216,36 @@ export default async function PropertyDetailPage({
       .eq("property_id", id)
       .order("changed_at", { ascending: false })
       .limit(50),
-    // As the SYSTEM — see lib/services/entity-timeline.ts. The page has already
-    // read this property through RLS and notFound()s otherwise.
-    readEntityTimeline({
-      // the row's own org — the caller read it through RLS above, so this is
-      // provably their org, and it is available before `profile` is resolved
-      orgId: p.org_id as string,
-      viewerRole: profile.role,
-      viewer: supabase,
-      entityType: "property",
-      entityIds: [id],
-      limit: 50,
-    }).then((data) => ({ data, error: null })),
-    // this property's key movements belong on its activity trail (keys audit) —
-    // key events carry the key's id, so they need their own fetch
-    keyIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : readEntityTimeline({
-          orgId: p.org_id as string,
-          viewerRole: profile.role,
-          viewer: supabase,
-          entityType: "key",
-          // keyIds came from a keys read on the caller's own client
-          entityIds: keyIds,
-          limit: 20,
-        }).then((data) => ({ data, error: null })),
+    // Combined Activity (A06): the property, its keys' movements (keys audit —
+    // key events carry the key's id) and its viewings' events as ONE feed,
+    // read as the SYSTEM — see lib/services/entity-timeline.ts. The page has
+    // already read this property through RLS and notFound()s otherwise; the
+    // key ids came from the keys read on this client above, and the viewing
+    // ids are EVERY viewing of the property, read on this client too (paged;
+    // a failed page fails the page) — not the "upcoming" card's next ten. A
+    // signed slip's names are withheld from non-admins by the reader.
+    readRecordViewingIds(supabase, { column: "property_id", id }).then((viewingIds) =>
+      readEntityTimelines({
+        // the row's own org — the caller read it through RLS above, so this is
+        // provably their org
+        orgId: p.org_id as string,
+        viewerRole: profile.role,
+        viewer: supabase,
+        sources: [
+          { entityType: "property", entityIds: [id] },
+          { entityType: "key", entityIds: keyIds },
+          { entityType: "viewing", entityIds: viewingIds },
+        ],
+        perSource: 50,
+        limit: 100,
+      }),
+    ),
     supabase
       .from("viewings")
       .select("id, scheduled_at, duration_min, status, contacts(display_name), agent:profiles!agent_id(full_name)")
       .eq("property_id", id)
       .eq("status", "scheduled")
-      .gte("scheduled_at", new Date().toISOString())
+      .gte("scheduled_at", now.toISOString())
       .order("scheduled_at", { ascending: true })
       .limit(10),
     supabase
@@ -257,15 +286,29 @@ export default async function PropertyDetailPage({
       .select("value, verified_at")
       .eq("key", "vat_property")
       .maybeSingle(),
+    // A05: the trail back up — the parent, and a phase's project for a unit
+    // under a phase. At most two reads by primary key on this caller's client;
+    // never throws (an unreadable parent is said on the page, not guessed).
+    fetchLineage(supabase, { id: p.id, kind: p.kind, parent_id: p.parent_id }),
+    // A08: the summary's next action — the next OPEN task on this property,
+    // overdue first, undated last, `id` breaking ties. ONE read on the
+    // caller's client: tasks_select shows an admin every task in the org and
+    // anyone else only the tasks assigned to or created by them, which is why
+    // the summary says "Your next task" to a non-admin.
+    supabase
+      .from("tasks")
+      .select("id, title, due_at")
+      .eq("property_id", id)
+      .eq("is_done", false)
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("id")
+      .limit(1),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
-  const propertyEventRows = unwrapRows(eventsRes, "events");
-  const keyEventRows = unwrapRows(keyEventsRes, "key events");
-  const eventRows = [...propertyEventRows, ...keyEventRows]
-    .sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1))
-    .slice(0, 50);
   const viewingRows = unwrapRows(viewingsRes, "viewings");
   const documentRows = unwrapRows(documentsRes, "documents");
+  // a failed read throws to the boundary — never "None" for a read that did not answer
+  const nextTask = unwrapRows(nextTaskRes, "next task")[0] ?? null;
 
   const isAdminOrLM = profile.role === "admin" || profile.role === "listing_manager";
   // mirrors properties_update RLS — forms render read-only when a save would no-op
@@ -328,31 +371,29 @@ export default async function PropertyDetailPage({
     p.org_id as string,
     photos.map((m) => m.content_sha256).filter((h): h is string => Boolean(h)),
   );
-  const quality = computeQualityScore({
-    sharedPhotoWith,
-    isLand,
-    isContainer: isContainerRow,
-    unitCount: unitFacts.unitCount,
-    pricedUnitCount: unitFacts.pricedUnitCount,
-    hasCoverPhoto: photos.some((m) => m.is_cover),
-    photoCount: photos.length,
-    titleEn: (p.title as { en?: string } | null)?.en,
-    publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
-    hasPrice: p.asking_price !== null || p.rent_price_month !== null,
-    hasArea: isLand ? p.plot_area_sqm !== null : p.covered_area_sqm !== null,
-    hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
-    hasPlanningZoneAndDensity:
-      p.planning_zone_code !== null && p.building_density_pct !== null,
-    hasCoords: p.location !== null,
-    titleDeedSet: p.title_deed_status !== "unknown",
-    permitSet: p.permit_status !== "unknown",
-    mandateActive: mandateRows.some((m) => m.status === "active"),
-    hasAssignedAgent: p.assigned_agent_id !== null,
-    hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
-    // Audit CRM-05: a build year that contradicts the status or a pending
-    // delivery date — the ring's warning list, alongside shared photographs.
-    buildConflict: buildProgress(p.construction_status, p.delivery_date, new Date(), p.year_built).mismatch,
-  });
+  // F07: through buildQualityInput — the ONE definition the stored score
+  // (recomputeQualityScore) and the worklist read. This page built its own
+  // input and drifted: it counted a centroid stand-in (location_approx, 0054)
+  // as an exact map location, so the ring on an approximate listing showed 10
+  // points more than the list, the worklist and the publish gate. The
+  // build-conflict and shared-photo warnings come from the same function.
+  const quality = computeQualityScore(
+    buildQualityInput(p, {
+      hasCoverPhoto: photos.some((m) => m.is_cover),
+      photoCount: photos.length,
+      mandateActive: mandateRows.some((m) => m.status === "active"),
+      unitCount: unitFacts.unitCount,
+      pricedUnitCount: unitFacts.pricedUnitCount,
+      sharedPhotoWith,
+    }),
+  );
+  // F03: a unit's (or phase's) build contradiction that is its project's, said
+  // where it is fixed — the worklist's grouping rule, asked of this one row
+  const buildSource = await fetchBuildConflictSource(
+    supabase,
+    p,
+    quality.warnings.find((w) => w.key === "build_conflict")?.label ?? null,
+  );
 
   const changerIds = [...new Set((priceRows ?? []).map((r) => r.changed_by).filter(Boolean))];
   const { data: changerProfiles } = changerIds.length
@@ -374,6 +415,14 @@ export default async function PropertyDetailPage({
   }));
 
   const activeMandate = mandateRows.find((m) => m.status === "active");
+  // mandates_safe (0127) shows an agent only the mandates of properties
+  // assigned to them and those they created: for any other agent an empty
+  // answer is not "No mandate" (A08 — the summary says "Not visible to you",
+  // and the header badge is not drawn rather than say "No mandate")
+  const mandatesComplete =
+    profile.role === "admin" ||
+    profile.role === "listing_manager" ||
+    p.assigned_agent_id === profile.id;
   const mandateState: MandateBadgeState = activeMandate
     ? (activeMandate.type as MandateBadgeState)
     : mandateRows.some((m) => m.status === "expired")
@@ -391,14 +440,20 @@ export default async function PropertyDetailPage({
       ].filter(Boolean),
     ),
   ];
-  const { data: ownerRows } = contactIds.length
-    ? await supabase
-        .from("contacts")
-        .select("id, display_name, phone_e164")
-        .in("id", contactIds as string[])
-    : { data: [] };
+  // A08: through unwrapRows — the summary says "Not recorded" or "not visible
+  // to you" for a party it cannot show, so a failed read must not look like
+  // either (it rendered an empty Parties panel before)
+  const ownerRows = contactIds.length
+    ? unwrapRows(
+        await supabase
+          .from("contacts")
+          .select("id, display_name, phone_e164")
+          .in("id", contactIds as string[]),
+        "party contacts",
+      )
+    : [];
   const ownerById = new Map(
-    (ownerRows ?? []).map((c) => [
+    ownerRows.map((c) => [
       c.id,
       { id: c.id, label: c.display_name ?? "Unnamed", sublabel: c.phone_e164 },
     ]),
@@ -407,13 +462,17 @@ export default async function PropertyDetailPage({
   // The assigned agent is a profile, not a contact — and it may be an INACTIVE
   // one, so this query must not filter on is_active or the panel would render
   // empty while the column still points somewhere.
-  const { data: agentRow } = p.assigned_agent_id
-    ? await supabase
-        .from("profiles")
-        .select("id, full_name, role, is_active")
-        .eq("id", p.assigned_agent_id)
-        .maybeSingle()
-    : { data: null };
+  // A08: through unwrapRows, so a failed read is the error boundary — not the
+  // summary's "Assigned, but not visible to you" (a primary-key read: 0 or 1 rows)
+  const agentRow = p.assigned_agent_id
+    ? (unwrapRows(
+        await supabase
+          .from("profiles")
+          .select("id, full_name, role, is_active")
+          .eq("id", p.assigned_agent_id),
+        "assigned agent",
+      )[0] ?? null)
+    : null;
   const assignedAgent = agentRow
     ? {
         id: agentRow.id,
@@ -460,8 +519,51 @@ export default async function PropertyDetailPage({
   const district = (p.districts as { name?: { en?: string } } | null)?.name?.en;
   const area = (p.areas as { name?: { en?: string } } | null)?.name?.en;
 
-  const overviewFacts: [string, string][] = [
-    ["Kind", p.kind],
+  // A05: where this record sits — its recorded parent (and a phase's project),
+  // and for a unit, its row in the parent's matrix. Shown for any record that
+  // has a parent or must have one, so an anomaly is said here too.
+  const matrixNode = matrixParent(p, lineage);
+  const partOf: ReactNode =
+    p.parent_id !== null || p.kind === "unit" || p.kind === "phase" ? (
+      <span className="flex flex-col items-end gap-1">
+        {lineage.chain.length > 0 ? (
+          <span>
+            {[...lineage.chain].reverse().map((node, i) => (
+              <Fragment key={node.id}>
+                {i > 0 ? <span className="font-normal text-text-3"> in </span> : null}
+                <Link href={`/properties/${node.id}`} className="font-mono text-brand-700 hover:underline">
+                  {node.reference}
+                </Link>{" "}
+                <span className="text-xs font-normal text-text-3">{kindLabel(node.kind)}</span>
+              </Fragment>
+            ))}
+          </span>
+        ) : null}
+        {matrixNode ? (
+          <Link
+            href={`/properties/${matrixNode.id}/units?unit=${p.id}#unit-${p.id}`}
+            className="text-xs text-brand-700 hover:underline"
+          >
+            Its row in the units matrix
+          </Link>
+        ) : p.kind === "unit" && p.visibility === "archived" ? (
+          // the matrix lists no archived unit — said, rather than a link to no row
+          <span className="text-xs font-normal text-text-3">Archived — not listed in the units matrix</span>
+        ) : null}
+        {lineage.issue ? (
+          <span role="note" className="text-xs font-normal text-warning">
+            {lineage.issue.text}
+          </span>
+        ) : null}
+      </span>
+    ) : null;
+
+  // A08: the ONE price expression, shared with the summary strip
+  const price = priceLine(p);
+
+  const overviewFacts: [string, ReactNode][] = [
+    ["Kind", kindLabel(p.kind)],
+    ...(partOf ? ([["Part of", partOf]] as [string, ReactNode][]) : []),
     ["Type", p.property_type.replace(/_/g, " ")],
     ["Transaction", p.transaction_type.replace(/_/g, " ")],
     ["Location", [district, area, p.address].filter(Boolean).join(" · ") || "—"],
@@ -469,18 +571,11 @@ export default async function PropertyDetailPage({
     // — and its one area is the site; it has no rooms of its own (2026-09-02
     // review: the overview read "Area —" for a development whose site plot
     // the wizard had just asked for).
+    [price.label, price.text ?? "—"],
     [
-      isContainerRow ? "From price" : "Price",
-      p.transaction_type === "rent"
-        ? p.rent_price_month
-          ? `${formatMoney(Number(p.rent_price_month))}/mo`
-          : "—"
-        : formatMoney(p.asking_price === null ? null : Number(p.asking_price)),
-    ],
-    [
-      isContainerRow ? "Site plot" : "Area",
+      isContainerRow ? "Site plot" : isLand ? "Plot" : "Area",
       formatArea(
-        p.property_type === "land" || isContainerRow
+        isLand || isContainerRow
           ? p.plot_area_sqm === null
             ? null
             : Number(p.plot_area_sqm)
@@ -491,7 +586,14 @@ export default async function PropertyDetailPage({
     ],
     ...(isContainerRow
       ? [["Units", `${unitFacts.unitCount} (${unitFacts.pricedUnitCount} priced)`] as [string, string]]
-      : [["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`] as [string, string]]),
+      : []),
+    // F07: a plot is described by its planning terms, frontage and utilities —
+    // the questions a land buyer asks first — not by bedrooms it does not have
+    ...(isLand
+      ? landOverviewFacts(p)
+      : isContainerRow
+        ? []
+        : [["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`] as [string, string]]),
     ["Quality score", `${quality.score}/100`],
     // T4.6 acceptance: current key holder visible on Overview
     [
@@ -535,35 +637,50 @@ export default async function PropertyDetailPage({
         </div>
       ) : null}
       <div>
-        <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 text-text-2">
-          <Link href="/properties">
-            <ArrowLeft className="size-4" /> Properties
-          </Link>
-        </Button>
+        {/* A05: Properties (as the list was left) › project › phase › this
+            record, from parent_id and kind — never from the reference */}
+        <PropertyBreadcrumb lineage={lineage} current={{ label: p.reference, mono: true }} />
         <div className="flex flex-wrap items-center gap-3">
           <QualityScoreRing
             score={quality.score}
             missing={quality.missing}
             warnings={quality.warnings}
           />
-          <h1 className="font-mono text-xl font-semibold text-text-1">{p.reference}</h1>
-          <MandateBadge state={mandateState} />
-          <StatusBadge status={p.status} />
-          <StatusBadge status={p.visibility} />
-          {/* Public and Available are TWO switches and the feed needs both
-              (0066: `visibility = 'public' and status = 'available'`). Setting
-              one without the other reads as published and reaches nobody — a
-              real session did exactly that and reported the listing live
-              (2026-09-03). Said here, next to the pair that disagrees. */}
-          {p.visibility === "public" && p.status !== "available" ? (
-            <span className="text-xs text-warning" role="note">
-              Public, but not on the site: the public feed only carries listings whose status is
-              Available.
+          {/* A08: the human title beside the reference, in the heading — it
+              was a small grey line under the header */}
+          <h1 className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="font-mono text-xl font-semibold text-text-1">{p.reference}</span>
+            {/* the space keeps the heading's name "PAF0001 Sea-view flat", not
+                "PAF0001Sea-view flat" (a flex gap is not a word break) */}
+            {title ? " " : null}
+            {title ? (
+              <span className="min-w-0 break-words text-base font-medium text-text-1">{title}</span>
+            ) : null}
+          </h1>
+          {/* each badge says what it is to a screen reader: "Open" or
+              "Expired" alone could be a mandate's or a deal's state */}
+          {mandatesComplete || activeMandate ? (
+            <span>
+              <span className="sr-only">Mandate: </span>
+              <MandateBadge state={mandateState} />
             </span>
           ) : null}
+          <span>
+            <span className="sr-only">Status: </span>
+            <StatusBadge status={p.status} />
+          </span>
+          <span>
+            <span className="sr-only">Visibility: </span>
+            <StatusBadge status={p.visibility} />
+          </span>
+          {/* Public-but-not-Available (2026-09-03) is said by the summary's
+              Availability cell: availabilityLine, the one rule (0066's feed) */}
+          {/* F01: the calculators open on THIS property — its reference and
+              stored VAT status choose the scenario there — not on a bare price
+              that silently lands on "not subject to VAT" */}
           {p.asking_price !== null ? (
             <Link
-              href={`/calculators?price=${Number(p.asking_price)}`}
+              href={purchaseCostsHref(p.id, Number(p.asking_price))}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
               title="Purchase-cost calculators at asking price"
             >
@@ -571,9 +688,10 @@ export default async function PropertyDetailPage({
             </Link>
           ) : null}
           {/* the same action group as the contact header: it wraps at phone
-              width rather than widening the page (the reason is written there) */}
+              width rather than widening the page (the reason is written there).
+              "Add task" is in the summary's Next action cell (A08) — one
+              AddTaskDialog on the page, beside the action it adds to. */}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <AddTaskDialog entity={{ property_id: p.id }} entityLabel={p.reference} />
             {p.kind === "project" || p.kind === "phase" ? (
               <Button asChild variant="outline" size="sm">
                 <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
@@ -599,26 +717,57 @@ export default async function PropertyDetailPage({
             ) : null}
           </div>
         </div>
-        {title ? <p className="mt-1 text-sm text-text-2">{title}</p> : null}
       </div>
 
-      <PropertyTabs tabs={PROPERTY_TABS} fallback={initialTab}>
+      {/* F03: the tab state is held by PropertyTabs (property-tabs.tsx), so
+          the readiness panel's "fix it here" links switch the tab in place */}
+      <PropertyTabs initialTab={initialTab}>
+        {/* A08: the at-a-glance strip under the heading — inside the Tabs
+            root so its Mandate link switches the tab in place */}
+        <PropertySummary
+          property={p}
+          contacts={ownerById}
+          agent={agentRow}
+          nextTask={nextTask}
+          nextViewing={viewingRows[0] ?? null}
+          mandates={mandateRows}
+          mandatesComplete={mandatesComplete}
+          quality={quality}
+          viewerIsAdmin={profile.role === "admin"}
+          now={now}
+        />
+        {/* F03: readiness in visible text — website essentials, completeness
+            and data warnings, each its own statement — where the ring's hover
+            tooltip was the only account of it */}
+        <ListingReadiness
+          propertyId={p.id}
+          visibility={p.visibility}
+          status={p.status}
+          container={isContainerRow}
+          quality={quality}
+          buildSource={buildSource}
+        />
+        {/* data-property-tab: where a TabLink moves focus */}
         <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="legal">Legal</TabsTrigger>
-          <TabsTrigger value="marketing">Marketing</TabsTrigger>
-          <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
-          <TabsTrigger value="mandate">Mandate &amp; Keys</TabsTrigger>
-          <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
-          <TabsTrigger value="reservation">Reservation</TabsTrigger>
-          <TabsTrigger value="buyers">Matching buyers</TabsTrigger>
-          <TabsTrigger value="activity">Activity</TabsTrigger>
+          <TabsTrigger value="overview" data-property-tab="overview">Overview</TabsTrigger>
+          <TabsTrigger value="details" data-property-tab="details">Details</TabsTrigger>
+          <TabsTrigger value="legal" data-property-tab="legal">Legal</TabsTrigger>
+          <TabsTrigger value="marketing" data-property-tab="marketing">Marketing</TabsTrigger>
+          <TabsTrigger value="media" data-property-tab="media">
+            Media ({(mediaRows ?? []).length})
+          </TabsTrigger>
+          <TabsTrigger value="mandate" data-property-tab="mandate">Mandate &amp; Keys</TabsTrigger>
+          <TabsTrigger value="documents" data-property-tab="documents">
+            Documents ({documents.length})
+          </TabsTrigger>
+          <TabsTrigger value="reservation" data-property-tab="reservation">Reservation</TabsTrigger>
+          <TabsTrigger value="buyers" data-property-tab="buyers">Matching buyers</TabsTrigger>
+          <TabsTrigger value="activity" data-property-tab="activity">Activity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2" data-testid="property-overview-facts">
               {overviewFacts.map(([label, value]) => (
                 <div
                   key={label}
@@ -891,7 +1040,7 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="activity" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <EventTimeline events={eventRows} />
+            <ActivityFeed timeline={timeline} pageEntityType="property" />
           </div>
         </TabsContent>
       </PropertyTabs>

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { kycCompletion, type KycState } from "@/lib/constants/checklists";
+import { formatDateTime } from "@/lib/utils/format";
 
 /**
  * Deal health score 0–100 (doc 02 §C5):
@@ -21,6 +22,18 @@ import { kycCompletion, type KycState } from "@/lib/constants/checklists";
  * per-card joins. Derived state only — recomputes write NO event; the
  * triggering mutation is already evented (DECISIONS T3.3). A recompute writes
  * only over the row it read (T-deal-health-race, see recomputeDealHealth).
+ *
+ * READ TIME (A09). The one factor that changes with nothing but the clock —
+ * activity, days since `last_activity_at` — is NOT taken from the snapshot of
+ * an open deal: every reader re-scores it against its own clock (liveHealth).
+ * The stored activity points were nearly always 30/30: every deal-side
+ * recompute runs straight after a write that stamps `last_activity_at = now()`,
+ * and nothing recomputes as time passes, so an idle deal kept full marks for
+ * good. Readers never write: `health_score` and `health` keep what the last
+ * recompute stored, so for an idle open deal the stored `health_score` is
+ * HIGHER than what the screens show. Anything that reads the stored score
+ * (today only the deal page and the board, both through liveHealth) must
+ * apply the same rule.
  */
 
 export const HEALTH_WEIGHTS = {
@@ -106,28 +119,138 @@ export function computeHealth(inputs: HealthInputs, now: Date = new Date()): Hea
           : "none active",
   });
 
-  // ≤7d full, ≤14d 15, else 0 (doc 02 §C5)
-  let activityPoints = 0;
-  let activityDetail = "no activity recorded";
-  if (inputs.lastActivityAt) {
-    const last =
-      typeof inputs.lastActivityAt === "string"
-        ? new Date(inputs.lastActivityAt)
-        : inputs.lastActivityAt;
-    const days = (now.getTime() - last.getTime()) / DAY_MS;
-    if (days <= 7) activityPoints = HEALTH_WEIGHTS.activity;
-    else if (days <= 14) activityPoints = 15;
-    activityDetail = `${Math.max(0, Math.floor(days))}d since last activity`;
-  }
-  factors.push({
-    key: "activity",
-    label: "Recent activity",
-    points: activityPoints,
-    max: HEALTH_WEIGHTS.activity,
-    detail: activityDetail,
-  });
+  factors.push(activityFactor(inputs.lastActivityAt, now));
 
   return { score: factors.reduce((sum, f) => sum + f.points, 0), factors };
+}
+
+/**
+ * The activity factor — the ONE rule, used by computeHealth when a recompute
+ * stores it and by liveHealth when a reader re-scores it.
+ * ≤7d full, ≤14d 15, else 0 (doc 02 §C5). A time in the future (clock skew)
+ * scores full and reads "0d".
+ */
+export function activityFactor(lastActivityAt: string | Date | null, now: Date): HealthFactor {
+  let points = 0;
+  let detail = "no activity recorded";
+  if (lastActivityAt) {
+    const last = typeof lastActivityAt === "string" ? new Date(lastActivityAt) : lastActivityAt;
+    const days = (now.getTime() - last.getTime()) / DAY_MS;
+    if (days <= 7) points = HEALTH_WEIGHTS.activity;
+    else if (days <= 14) points = 15;
+    detail = `${Math.max(0, Math.floor(days))}d since last activity`;
+  }
+  return {
+    key: "activity",
+    label: "Recent activity",
+    points,
+    max: HEALTH_WEIGHTS.activity,
+    detail,
+  };
+}
+
+/** The deal columns a reader needs for liveHealth. */
+export interface HealthRowForDisplay {
+  status: string;
+  health_score: number;
+  health: unknown;
+  last_activity_at: string | null;
+}
+
+/**
+ * What a reader shows, and on what basis:
+ *   - `live`: an open deal with a snapshot — the activity factor re-scored
+ *     against the reader's clock, every other factor as the last recompute
+ *     assessed it (at `assessedAt`), the score their sum;
+ *   - `closed`: a won or lost deal — the stored score and snapshot as they
+ *     are. A closed deal does not decay on the board;
+ *   - `stored`: an open deal with nothing to re-score — no snapshot (a row
+ *     written before snapshots existed), a snapshot that is not a well-formed
+ *     factor list, one with no activity entry, or a `last_activity_at` that is
+ *     not a time. The stored score as it is: never a guessed number.
+ */
+export interface LiveHealth {
+  score: number;
+  factors: HealthFactor[] | null;
+  /** `health.computed_at` when it is a time — when the stored factors were assessed */
+  assessedAt: string | null;
+  basis: "live" | "closed" | "stored";
+}
+
+const FACTOR_KEYS = new Set<string>(Object.keys(HEALTH_WEIGHTS));
+
+/**
+ * The stored snapshot as a factor list, or null when there is none or it is
+ * not well formed. `health` is a jsonb column the deal's own agent can PATCH
+ * directly (see HEALTH_WRITE_ATTEMPTS), so its shape is checked before any of
+ * its numbers are added up or rendered.
+ */
+function snapshotFactors(health: unknown): HealthFactor[] | null {
+  if (health === null || typeof health !== "object" || Array.isArray(health)) return null;
+  const raw = (health as { factors?: unknown }).factors;
+  if (!Array.isArray(raw)) return null;
+  const seen = new Set<string>();
+  const out: HealthFactor[] = [];
+  for (const f of raw) {
+    if (f === null || typeof f !== "object") return null;
+    const { key, label, points, max, detail } = f as Record<string, unknown>;
+    if (typeof key !== "string" || !FACTOR_KEYS.has(key) || seen.has(key)) return null;
+    if (typeof label !== "string" || typeof detail !== "string") return null;
+    if (typeof points !== "number" || !Number.isFinite(points)) return null;
+    if (typeof max !== "number" || !Number.isFinite(max)) return null;
+    seen.add(key);
+    out.push({ key: key as HealthFactorKey, label, points, max, detail });
+  }
+  return out;
+}
+
+/** `health.computed_at`, when it is a time. */
+function assessedAtOf(health: unknown): string | null {
+  if (health === null || typeof health !== "object" || Array.isArray(health)) return null;
+  const at = (health as { computed_at?: unknown }).computed_at;
+  return typeof at === "string" && Number.isFinite(new Date(at).getTime()) ? at : null;
+}
+
+/**
+ * Pure — the health a reader shows (A09); LiveHealth says on what basis.
+ * Reads only: neither this nor its callers write `health` or `health_score`
+ * back, and no event is written (derived state, T3.3).
+ */
+export function liveHealth(row: HealthRowForDisplay, now: Date): LiveHealth {
+  const factors = snapshotFactors(row.health);
+  const assessedAt = assessedAtOf(row.health);
+  const stored: LiveHealth = { score: row.health_score, factors, assessedAt, basis: "stored" };
+  if (row.status !== "open") return { ...stored, basis: "closed" };
+  if (factors === null) return stored;
+  const at = factors.findIndex((f) => f.key === "activity");
+  if (at === -1) return stored;
+  if (row.last_activity_at !== null && !Number.isFinite(new Date(row.last_activity_at).getTime())) {
+    return stored;
+  }
+  const live = factors.map((f, i) => (i === at ? activityFactor(row.last_activity_at, now) : f));
+  return {
+    score: live.reduce((sum, f) => sum + f.points, 0),
+    factors: live,
+    assessedAt,
+    basis: "live",
+  };
+}
+
+/**
+ * The line under a breakdown that says when it was assessed (A09), or null
+ * when there is no breakdown to qualify. Times in Cyprus (formatDateTime).
+ */
+export function healthAssessedLine(h: LiveHealth): string | null {
+  if (h.factors === null) return null;
+  if (h.basis === "live") {
+    return h.assessedAt
+      ? `Checklist assessed ${formatDateTime(h.assessedAt)} · activity as of now`
+      : "Activity as of now · when the checklist was assessed is not recorded";
+  }
+  if (h.assessedAt === null) return null;
+  return h.basis === "closed"
+    ? `Assessed ${formatDateTime(h.assessedAt)} · a closed deal is not re-scored over time`
+    : `Assessed ${formatDateTime(h.assessedAt)}`;
 }
 
 type Client = SupabaseClient<Database>;

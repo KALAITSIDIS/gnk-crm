@@ -2,6 +2,10 @@ import { ShareLinksClient } from "@/components/features/share-links/share-links-
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Share links · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Share links" };
 
 export const dynamic = "force-dynamic";
 

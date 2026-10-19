@@ -286,7 +286,13 @@ test("enable → select → feed → remove → gone → disable → empty", asy
     if (test.info().project.name === "mobile") {
       // Ten tabs overflow 390px. `justify-start` on the strip is what keeps its
       // FIRST tab reachable at scrollLeft 0 — a centred overflowing strip hides
-      // its own start, and scrolling right never brings it back.
+      // its own start, and scrolling right never brings it back. The check is
+      // HORIZONTAL: since the review's summary strip and readiness panel
+      // (2026-10-18) the strip sits below a phone's first screen, so bring it
+      // into vertical view first — by the page's scroll, never the strip's.
+      await page.getByRole("tablist").first().evaluate((el) => {
+        window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 8 });
+      });
       await expect(page.getByRole("tab", { name: "Overview" })).toBeInViewport({ ratio: 1 });
     }
     await openTab(page, "Marketing");

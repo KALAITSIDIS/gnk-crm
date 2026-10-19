@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { PhoneCall } from "lucide-react";
 import { toast } from "sonner";
 import { logDealContact, type DealSectionState } from "@/lib/actions/deals";
+import { ConversationOutcomeField } from "@/components/features/shared/conversation-outcome-field";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -88,6 +89,8 @@ export function LogDealContact({
                 ))}
               </select>
             </div>
+
+            <ConversationOutcomeField idPrefix="log-contact-outcome" />
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="log-contact-note">Note (optional)</Label>

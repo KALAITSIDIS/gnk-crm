@@ -625,13 +625,20 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     // suite never checked, and it skipped silently in CI on 2026-08-10 while
     // the policy was being ENFORCED. It now seeds its own cover image, the
     // same trade the detail routes above already make.
+    //
+    // The CARD view, explicitly: it shows each listing's cover at every width.
+    // The default view at a desktop width is the table, whose photo column
+    // appears only from 1680 px (A03 column priority) — below that the cell is
+    // display:none and its lazy <img> is never fetched, so the 1280 px desktop
+    // project asked Storage for nothing even with a cover seeded.
     await collectViolations(page);
     const storageHits: string[] = [];
     page.on("response", (r) => {
       if (/\/storage\/v1\/object\/public\//.test(r.url())) storageHits.push(r.url());
     });
+    const LIST_WITH_PHOTOS = "/properties?view=cards";
 
-    await page.goto("/properties", { waitUntil: "networkidle" });
+    await page.goto(LIST_WITH_PHOTOS, { waitUntil: "networkidle" });
     await page.waitForTimeout(700);
 
     if (storageHits.length === 0) {
@@ -640,7 +647,7 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
         "no property media and seeding needs the local service key",
       );
       await seedPropertyWithCover(serviceClient());
-      await page.goto("/properties", { waitUntil: "networkidle" });
+      await page.goto(LIST_WITH_PHOTOS, { waitUntil: "networkidle" });
       await page.waitForTimeout(700);
     }
 

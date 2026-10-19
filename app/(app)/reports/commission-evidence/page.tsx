@@ -8,6 +8,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import type { EntityOption } from "@/lib/actions/entity-search";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Commission evidence · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "Commission evidence" };
 
 export const dynamic = "force-dynamic";
 

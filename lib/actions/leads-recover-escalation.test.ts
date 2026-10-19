@@ -46,7 +46,7 @@ describe("recoverLeadEscalation", () => {
   it("retry: asks the database through the caller's session, then sends at once for THAT job", async () => {
     reset();
     state.rpc.mockResolvedValue({ data: [{ id: JOB, lead_id: "lead-1", state: "pending" }], error: null });
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "retry" })).resolves.toBeUndefined();
+    await expect(recoverLeadEscalation({ jobId: JOB, action: "retry" })).resolves.toEqual({ error: null });
     expect(state.rpc).toHaveBeenCalledWith("request_lead_escalation_recovery", { p_job_id: JOB, p_action: "retry" });
     expect(state.afters, "the send is scheduled after the answer, like the desk alert's").toHaveLength(1);
     await state.afters[0]!();
@@ -79,8 +79,8 @@ describe("recoverLeadEscalation", () => {
 
   it("refuses malformed input before asking anything: a non-uuid, an unknown action", async () => {
     reset();
-    await expect(recoverLeadEscalation({ jobId: "job-7", action: "retry" })).rejects.toThrow(/invalid/i);
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "reset" as never })).rejects.toThrow(/invalid/i);
+    expect((await recoverLeadEscalation({ jobId: "job-7", action: "retry" })).error).toMatch(/invalid/i);
+    expect((await recoverLeadEscalation({ jobId: JOB, action: "reset" as never })).error).toMatch(/invalid/i);
     expect(state.rpc).not.toHaveBeenCalled();
     expect(state.afters).toHaveLength(0);
   });
@@ -91,7 +91,11 @@ describe("recoverLeadEscalation", () => {
       data: null,
       error: { code: "P0001", message: "The same key is still safe to reuse — use Retry, which cannot send a second copy." },
     });
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "resend" })).rejects.toThrow(/still safe to reuse/);
+    // returned, never thrown: Next redacts a thrown message in production, and
+    // this sentence is the admin's only guide to which recovery to use
+    await expect(recoverLeadEscalation({ jobId: JOB, action: "resend" })).resolves.toEqual({
+      error: "The same key is still safe to reuse — use Retry, which cannot send a second copy.",
+    });
     expect(state.afters).toHaveLength(0);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -102,15 +106,16 @@ describe("recoverLeadEscalation", () => {
       data: null,
       error: { code: "42P01", message: 'relation "notification_jobs" does not exist' },
     });
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "retry" })).rejects.toThrow(/could not queue/i);
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "retry" })).rejects.not.toThrow(/notification_jobs/);
+    const answer = await recoverLeadEscalation({ jobId: JOB, action: "retry" });
+    expect(answer.error).toMatch(/could not queue/i);
+    expect(answer.error).not.toMatch(/notification_jobs/);
     expect(state.afters).toHaveLength(0);
   });
 
   it("treats no row back as no job, not as success", async () => {
     reset();
     state.rpc.mockResolvedValue({ data: [], error: null });
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "retry" })).rejects.toThrow(/no escalation/i);
+    expect((await recoverLeadEscalation({ jobId: JOB, action: "retry" })).error).toMatch(/no escalation/i);
     expect(state.afters).toHaveLength(0);
   });
 });

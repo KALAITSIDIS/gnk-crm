@@ -150,7 +150,11 @@ decision (HANDOFF §5) does not cover it.
   explicit `kind=unit` wins, same escape hatch as the retired scope: a filter
   that returns nothing when you pick it is a broken filter. Measured against a
   project with 5 real units — default list 3 rows, `?kind=unit` 5 rows, and the
-  CSV agrees with both. The original entry follows.
+  CSV agrees with both. *(2026-10-18, F04-L — DECISIONS `T-crm-review-2026-10-18`,
+  branch `feat/crm-review-2026-10-18`, not yet merged: the default now reads
+  "Listings & developments (no units)", an "All kinds" option (`kind=all`) lists
+  every kind, and the default view's header counts what it hides — "M units not
+  shown — Show all kinds".)* The original entry follows.
 
   - **3. Units flood the properties list. (original).**
   `propertyFiltersSchema` (`lib/validators/properties.ts:132`) has no `kind`
@@ -807,7 +811,11 @@ explicit direction.
   Scope: non-archived, status in draft/available/reserved/under_offer — a sold
   listing needs no more photos. Categories name the TAB the fix lives on, which
   is what turns a count into an instruction; the tabs are Radix state with no
-  href, so naming them is as close to a deep link as the app allows.
+  href, so naming them is as close to a deep link as the app allows. *(No longer
+  true since F03, 2026-10-19 — DECISIONS `T-crm-review-2026-10-18`, branch
+  `feat/crm-review-2026-10-18`, not yet merged: every fix hint links to
+  `/properties/<id>?tab=<tab>`, or to the Units page for a container's units —
+  `fixHref` in `lib/services/quality-worklist.ts`.)*
 - ~~**Portfolio tab on a contact, S.** Finding 9, from the other side.~~
   **ALREADY SHIPPED — this line was a DUPLICATE and stayed open for four days.**
   It went in with the audit (`0cc9ab6`, 2026-08-21) and finding 9 shipped the
@@ -1369,8 +1377,15 @@ explicit direction.
 - Dashboard KPI deltas vs the previous period (7d vs prior 7d, month vs last
   month) — same queries with a shifted window.
 - "Lost this month" counter beside "Won this month" for honest pipeline health.
-- Admin visibility into org-wide overdue tasks and unassigned leads (agents
-  see only their own).
+- ~~Admin visibility into org-wide overdue tasks and unassigned leads (agents
+  see only their own).~~ **DONE 2026-10-18 — DECISIONS `T-crm-review-2026-10-18`
+  (A01), branch `feat/crm-review-2026-10-18` (`323296d`), NOT YET MERGED:** the
+  admin dashboard's Team section holds "Unassigned open leads" (oldest first)
+  and "Overdue across the team" (`assignee_id is null or <> me`, so unassigned
+  tasks are included), each with an exact count; `/tasks?scope=team` lists the
+  team's tasks with an Edit dialog that reassigns (A02). VERIFY (fixed):
+  `grep -n "assignee_id.is.null" components/features/dashboard/team-cards.tsx`
+  — a hit means shipped.
 - "View all →" footer links on the admin Latest-events and Mandates-expiring
   cards once a canonical events/mandates list page exists to link to.
 - ~~Property importer `photo_folder` support (doc 09): ingest photos from
@@ -1438,9 +1453,19 @@ explicit direction.
 - Pipeline board: stale-deal highlighting — tint cards whose
   `stage_entered_at` tenure exceeds a per-stage threshold (column is in place
   since 0011).
-- Properties list: column sorting (price, score, updated) — currently fixed
+- ~~Properties list: column sorting (price, score, updated) — currently fixed
   `created_at desc` only — plus a `?tab=` param on the detail page so
-  Media/Documents tabs are deep-linkable.
+  Media/Documents tabs are deep-linkable.~~ **DONE, in two parts.**
+  **Sorting: 2026-10-18 — DECISIONS `T-crm-review-2026-10-18` (A03), branch
+  `feat/crm-review-2026-10-18` (`f5186dc`), NOT YET MERGED:** `?sort=` newest
+  (the default, still exactly `created_at.desc,id.asc`), updated (most recent
+  first only), and price, plot (land lists), score and reference, each both ways, on server-rendered table
+  headers, and the CSV in the same order. **`?tab=`: LANDED 2026-10-18 with
+  `T-portal-feed-integrity` (PR #175 → `9e16364`):** the property page's tabs
+  follow `?tab=` (`PropertyTabs`), and the review's fix links use it.
+  VERIFY (fixed): `grep -n "PROPERTY_SORTS = \[" lib/validators/properties.ts`
+  and `grep -n "useSearchParams" components/features/properties/property-tabs.tsx`
+  — a hit each.
 - Property media: drag-and-drop photo reorder with dnd-kit (pin `DndContext
   id`, see pipeline board) replacing the up/down arrows; re-watermark
   renditions when visibility changes (watermark currently applies only at
@@ -1461,6 +1486,11 @@ explicit direction.
   inputs don't re-sync on browser back/forward (applied filters do); email
   uniqueness is advisory-only (no partial unique index like phone — add one if
   duplicate emails start appearing); `/contacts?tab=` deep-links.
+  - *2026-10-18 (A04 — DECISIONS `T-crm-review-2026-10-18`, branch
+    `feat/crm-review-2026-10-18`, not yet merged): the deep link shipped as
+    `/contacts/<id>?tab=profile|preferences|kyc|activity|portfolio|terms|deals|viewings|documents`
+    (`CONTACT_TABS`; anything else opens Profile), and the contacts filter bar's
+    controls are named (A08). The rest of this line was not re-checked.*
 - Viewings follow-ups (T-audit-viewings): reschedule/edit action
   (`checkViewingConflicts` already takes `excludeId` for it; must clear the
   route stamp when the day changes); optional deal picker in the create dialog
@@ -1479,6 +1509,14 @@ explicit direction.
   claim/assign control (0012's admin fallback prevents new orphans, but an
   explicit surface beats a fallback); tasks module i18n (en/el/ru); feedback
   nudge rows could show the contact name next to the property ref.
+  - *2026-10-18 (A01/A02 — DECISIONS `T-crm-review-2026-10-18`, branch
+    `feat/crm-review-2026-10-18`, not yet merged): SHIPPED from this line — an
+    Edit dialog (title and a Cyprus due date and time for a person's task; the
+    assignee only for an automatic reminder), assigning to a colleague, `/tasks`
+    Mine · Delegated · Team (admin) with due filters, every task row opening its
+    record, and the admin dashboard's Team cards (unassigned and team overdue).
+    Still open: a delete UI, snoozing or dismissing an automatic reminder,
+    i18n, and the contact name on feedback rows.*
 - Settings follow-ups (T-audit-settings): admin "Reset password" button on the
   users table (regenerate a temp password via the existing admin API + the
   credentials-shown-once dialog — closes the no-SMTP lockout gap until Phase 2
@@ -2371,6 +2409,12 @@ VERIFY, run before starting.
   merged as PR #45 → main `4b100ab` and deployed, DECISIONS `T-audit-2026-09-23-property-floor-area`.
   Everything else in this entry is still outstanding, which is why the VERIFY above still
   reads unbuilt. VERIFY for the slice: `grep -l "properties_floor_within_total" supabase/migrations/*.sql`.
+  - *2026-10-19 (A05 — DECISIONS `T-crm-review-2026-10-18`, branch `feat/crm-review-2026-10-18`, not yet
+    merged): the property page and its units page now SAY a wrong parent kind, a loop, a depth past two, a
+    parent RLS hides (another organisation's, while `parent_id` is single-column) or a missing parent
+    (`lib/services/property-lineage.ts`), and never guess one from a reference prefix. The
+    `properties_parent_kind` trigger itself is unshipped. The review's read of production (2026-10-18) found
+    every unit and phase under a parent of the right kind in its own organisation.*
 - ~~**The importer reads a decimal COMMA as a thousands separator, S.**~~ **FIXED 2026-09-23 — DECISIONS
   `T-importer-cyprus-number-format`: both Cyprus conventions read, ambiguous or non-numeric cells refused
   naming the column, fractions refused in whole-number columns, semicolon files read; `num()` removed.**
@@ -3408,6 +3452,10 @@ VERIFY, run before starting.
   <contact column> trigger refusing a session's link to an erased contact; freeze party links on closed deals and on
   viewings with a signed slip. **VERIFY:** a rolled-back aal2 insert of a `buyer_requirements` row naming an erased
   contact — accepted means open.
+  - *2026-10-18 (A04 — DECISIONS `T-crm-review-2026-10-18`, branch `feat/crm-review-2026-10-18`, not yet merged):
+    the APP now refuses a proposal or availability link for an erased or archived recipient (`createShareLink`,
+    `createAvailabilityLink`) and a saved search seeded from an enquiry's brief for one (`seedRequirementFromBrief`).
+    `saveBuyerRequirement`'s own form and the database trigger are unchanged, so the VERIFY still reads open.*
 - **Service-role storage removals trust a session-written path, S (pre-existing; found by T-erasure-lifecycle-guard's
   review, code-traced, not probed).** The erasure, the retention purge, `deleteContactDocument`,
   `deletePropertyDocument` and `deleteMediaBulk` (originals and non-photo renditions in `documents`) remove the path a
@@ -3614,24 +3662,40 @@ VERIFY, run before starting.
   T-insert-id-without-history's map. **VERIFY:** as an aal2 agent in a rolled-back transaction, `update contacts set
   merged_into_id = <another contact> where id = <a contact it created>` — UPDATE 1 means open (measured 2026-10-02 at
   0133).
-- **`report_stage_conversion` counts a `stage_changed` whose payload is `{}` (or not an object) as a legacy
-  movement, XS (pre-existing, historical rows only since 0131).** 0130 classifies a missing id as a pre-0067 side,
+- ~~**`report_stage_conversion` counts a `stage_changed` whose payload is `{}` (or not an object) as a legacy
+  movement, XS (pre-existing, historical rows only since 0131).**~~ **FIXED IN THE REPOSITORY 2026-10-18 — DECISIONS
+  `T-crm-review-2026-10-18` (F06), migration 0154, branch `feat/crm-review-2026-10-18` (`aa52546`), NOT YET MERGED
+  and NOT YET ON HOSTED: a movement that names no stage at all (no id and no recorded name on either side) is
+  malformed — left out of every figure and counted in `moves_malformed`; 0154's postflight plants one `{}` payload
+  and checks it. VERIFY (fixed): `grep -n "names no stage at all" supabase/migrations/0154_report_definitions.sql`
+  — a hit; on hosted, the ledger holds `0154`.** (original) 0130 classifies a missing id as a pre-0067 side,
   so an event with neither ids nor names counts in `moves_total` with a `null → null` transition. No writer of
   this repository produces one and sessions can no longer write the type at all; the service role (an import) still
   could. Fix shape: a movement with no id AND no name on either side is malformed. Found by
   T-authentic-stage-movement's trace. **VERIFY:** in a rolled-back transaction as postgres, insert into a throwaway
   organisation one deal `stage_changed` with payload `'{}'` and read `report_stage_conversion` for a window holding
   only it, as that organisation's aal2 admin — `moves_total` 1 / `moves_malformed` 0 means open.
-- **The performance page paints four other reports' failures as "Nothing in this window.", S (pre-existing).**
-  `app/(app)/reports/performance/page.tsx` reads `perfRes` / `roiRes` / `ttcRes` / `priceRes` / `citeRes` as
+- ~~**The performance page paints four other reports' failures as "Nothing in this window.", S (pre-existing).**~~
+  **FIXED 2026-10-18 — DECISIONS `T-crm-review-2026-10-18` (F06), branch `feat/crm-review-2026-10-18` (`0ee84e5`),
+  NOT YET MERGED: every RPC's error or shapeless answer is read, and a failed section shows its own `role="alert"`
+  with no export link (agent performance, lead sources, time to close, price reductions; the citation has its own;
+  stage conversion as before); the export route answers 500 with no audit line. VERIFY (fixed):
+  `grep -c 'LoadError testId=' "app/(app)/reports/performance/page.tsx"` — 4 (the old VERIFY's `Res.error` grep now
+  prints nothing, which is not proof by itself).** (original) `app/(app)/reports/performance/page.tsx` reads `perfRes` / `roiRes` / `ttcRes` / `priceRes` / `citeRes` as
   `data ?? []` / `data` without looking at `error` — the defect T-stage-conversion-malformed fixed for the
   stage-conversion section only (its brief scoped that section). A failed agent-performance or source-ROI RPC renders
   the empty state; a failed citation silently drops the audit anchor. Fix shape: the same per-section
   error state (`role="alert"`, export link hidden). Found by T-stage-conversion-malformed's review (completeness
   critic). **VERIFY:** `grep -n "Res.error" "app/(app)/reports/performance/page.tsx"` — one hit (convRes via
   `stageConversionView`) means open.
-- **"Stages are matched by name, so renaming one splits its history." is false since 0067, XS (copy).** The
-  stage-conversion section prints `reports.performance.stages.nameKeyed` whenever `stage_key = 'name'` — always —
+- ~~**"Stages are matched by name, so renaming one splits its history." is false since 0067, XS (copy).**~~
+  **FIXED 2026-10-18 — DECISIONS `T-crm-review-2026-10-18` (F06), branch `feat/crm-review-2026-10-18` (`0ee84e5`),
+  NOT YET MERGED: against 0154's answer (`stage_key` id) the section prints `stages.idKeyed` — "Each pipeline is
+  shown separately … A renamed stage keeps its history; changes recorded before stage ids were kept, and stages
+  since deleted, appear under the name recorded at the time." — and `nameKeyed`, reworded in all three locales
+  ("… combined by their current name; changes recorded before stage ids were kept use the name at the time."), is
+  printed only over a pre-0154 answer. VERIFY (fixed): `grep -n '"idKeyed"' messages/en.json` — a hit.** (original)
+  The stage-conversion section prints `reports.performance.stages.nameKeyed` whenever `stage_key = 'name'` — always —
   but 0067 resolves a recorded stage id to the stage's CURRENT name, so a rename no longer splits history (RLS test
   45 pins it); only pre-0067 name-only events still split. Rewrite the three locales' line (e.g. "Stages are matched
   by their current name; changes recorded before stage ids were kept use the name at the time."). Seen in
@@ -3879,6 +3943,11 @@ VERIFY, run before starting.
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
   by scrolling the inbox. **VERIFY:** `grep -n "leads" "app/(app)/contacts/[id]/page.tsx"` — no
   `.from("leads")` hit means still open.
+  - *2026-10-18 (A06 — DECISIONS `T-crm-review-2026-10-18`, branch `feat/crm-review-2026-10-18`, not yet
+    merged): every one of the contact's leads now feeds its Activity (a "Lead" chip on each line, ids read by
+    `lib/queries/contact-history.ts`), and the leads inbox row says whether the person has a saved search. The
+    enquiries themselves are still listed nowhere, so this stays open; the VERIFY still reads open, because the
+    page reads the lead ids through that module rather than `.from("leads")`.*
 - **Phase 3 — review state, hierarchy, feed grouping — NEEDS AN OPERATOR
   DECISION.** A `review_state` (none / requested / approved) with agents and
   listing managers requesting and admins approving, both evented, and a RACI
@@ -3893,6 +3962,9 @@ VERIFY, run before starting.
   LST-06); whether the two inert `cyprus_config` rows (`other_property_taxes`,
   `company_details`) are marked verified or deleted (GOV-03). Spec first, under
   `docs/superpowers/specs/`.
+  - *LST-09's cover-photo question is also "LST-09 — should a missing website essential block a new transition
+    to public?" in "CRM review — 2026-10-18": F03 (2026-10-19) built the essentials apart from the score and left
+    the gate unchanged, and that entry says what is ready to build. Close both.*
 
 ## Offline privacy — 2026-10-05 (T-sw-no-private-cache)
 
@@ -4067,7 +4139,7 @@ Found by T-keys-search-length's review (a repository sweep for searches and URL 
 - **The contacts and properties searches have no length bound, S.** `parseContactListFilters` (`lib/queries/contacts-list.ts`) takes `q` as any trimmed string and `propertyFiltersSchema.q` (`lib/validators/properties.ts`) has no `.max`; each search is written into the request URL three times, and neither search box has `maxLength`, so a paste reaches it as well as a link. MEASURED locally: contacts 2,600 ASCII characters → 200, 2,700 → 414; properties 2,600 → 200, 3,000 → 414; Greek letters (six URL bytes each) 400 → 200, 450 → 414. The 414 throws the list page (and the properties map) to the error boundary; the export routes answer their handled 500 "The export failed… Try again", which can never succeed. Shape: the keys pattern — a `.max` after trim with a refusal in words, `safeParse` returning `{ filters, refusal }`, the refusal on the page (and map) and `exportInvalid` on the export, `maxLength` on the box. **VERIFY:** `grep -n "q: clean(sp.q)" lib/queries/contacts-list.ts` — a hit means contacts is open; `grep -A3 "^  q: z" lib/validators/properties.ts | grep -c max` — 0 means properties is open.
 - **A hand-typed contacts filter value crashes the page, S.** `?temperature=`, `?source=` and `?agent=` are passed through as raw strings (`lib/queries/contacts-list.ts`) and sent as `.eq` on enum and uuid columns: MEASURED `temperature=bogus`, `source=bogus`, `agent=notauuid` → PostgREST 400 `22P02` → the contacts page's error boundary; `/contacts/export` answers the handled 500 "failed… Try again". (`?type=` and `?language=` are text and answer 200.) Shape: check them as `propertyFiltersSchema`'s `optionalEnum` / `optionalUuid` do — an unknown value becomes no filter, or a refusal in words. (Found again on 2026-10-14 by `T-external-audit-2026-10-14`, item 4 — `lib/queries/contacts-list.ts:81` and the CSV export; the other unchecked URL and action ids are in "External audit — 2026-10-14". Check `agent` with `z.guid()`, never the strict `z.uuid()`.) **VERIFY:** `grep -n "temperature: clean\|source: clean\|agent: clean" lib/queries/contacts-list.ts` — any hit means open.
   - *Partly fixed by `T-malformed-ids` (LANDED 2026-10-15 — PR #162, main `b4f7e2f`, deployed). Only `?agent=` is fixed; this entry stays open for `?temperature=` and `?source=`.* `?agent=` is dropped by `guidOrNull` when it is not an id, on the page and in the export. VERIFY re-run on origin/main `b4f7e2f` (as on the branch tree `e94c443`): `38:    temperature: clean(sp.temperature),` and `39:    source: clean(sp.source),` only (before the merge, on origin/main `c486856`, three hits: those two at `:36` and `:37`, and `38:    agent: clean(sp.agent),`); the agent line now reads `agent: guidOrNull(clean(sp.agent)) ?? undefined` (`:43`), and the `.eq` cited above at `:81` is at `:86`.
-- **A Beds filter past int4 crashes the properties list and map, S.** `optionalInt` (`lib/validators/properties.ts`) accepts any non-negative JavaScript integer (`1e300` included) and `bedrooms` is `int4`: MEASURED `gte(bedrooms, 2147483647)` → 200, `2147483648` → 400 `22003`, `1e+300` → 400 `22P02` → the error boundary on `/properties` and `/properties/map`; the export answers the handled 500. Reachable from the UI: the "Beds ≥" number input has no `max`. Shape: bound the value (a realistic cap such as 99, or the int4 maximum) and set `max` on the input. **VERIFY:** `grep -n "Number.isInteger" lib/validators/properties.ts` and check for an upper bound beside it.
+- ~~**A Beds filter past int4 crashes the properties list and map, S.**~~ **FIXED 2026-10-18 — DECISIONS `T-crm-review-2026-10-18` (A03), branch `feat/crm-review-2026-10-18` (`f5186dc`), NOT YET MERGED: `MAX_BEDS_FILTER = 99` bounds the parsed value (a larger one is no filter) and the "Bedrooms at least" box carries `max: MAX_BEDS_FILTER` (`filters.tsx:101`). VERIFY (fixed): `grep -n "MAX_BEDS_FILTER" lib/validators/properties.ts components/features/properties/filters.tsx` — the bound at `properties.ts:156` and the box's `max`.** (original) `optionalInt` (`lib/validators/properties.ts`) accepts any non-negative JavaScript integer (`1e300` included) and `bedrooms` is `int4`: MEASURED `gte(bedrooms, 2147483647)` → 200, `2147483648` → 400 `22003`, `1e+300` → 400 `22P02` → the error boundary on `/properties` and `/properties/map`; the export answers the handled 500. Reachable from the UI: the "Beds ≥" number input has no `max`. Shape: bound the value (a realistic cap such as 99, or the int4 maximum) and set `max` on the input. **VERIFY:** `grep -n "Number.isInteger" lib/validators/properties.ts` and check for an upper bound beside it.
 - **The other export routes read the LAST of a repeated parameter, S.** `app/(app)/{contacts,leads,pipeline,properties}/export/route.ts` build their search params with `Object.fromEntries(searchParams.entries())` (last wins) while their pages read the first (Next hands a repeated key as an array), so a hand-made export URL with a key twice exports a different filter than the page shows for the same URL. No UI path builds such a URL (each Export href writes one value per key). The keys route was fixed by `T-keys-search-length` (every value kept, `first()` applied). Shape: one shared "search params as the page sees them" helper used by every export route. **VERIFY:** `grep -ln "Object.fromEntries(request.nextUrl.searchParams.entries())" app` — each file listed is open.
 - **An unknown keys `?status=` becomes the whole register, S — operator to decide.** `keyFiltersSchema.status` is `z.enum(KEY_SCOPES).catch("all")` (since PERF-2, pinned by `lib/queries/keys-list.test.ts`), so `/keys?status=lsot` (a typo, a stale link) lists every key as "keys" with the status select showing no item, and `/keys/export?status=lsot` exports the whole register, audited as status "all". `T-keys-search-length` kept this deliberately: the operator's rule names searches, and a status comes from a select. If the rule covers filters too, refuse an unknown non-empty status in the same `{ filters, refusal }` shape. **VERIFY:** `grep -n 'catch("all")' lib/validators/keys.ts` — a hit means the fallback stands.
 - **The keys search does not escape ILIKE wildcards, S.** `sanitizeSearchTerm` removes only commas, brackets and backslashes; `%` and `_` reach `ilike` as wildcards (and PostgREST also reads `*` as one in a URL filter), so a search for `%` lists the whole register as "matching keys" and `_` matches any one character. From code (the review). Applies to every staff list search built the same way. Shape: escape `%`, `_` and `*` in the term before it is wrapped in `%…%` (and decide whether a term that is only wildcards is refused like `(,)`). **VERIFY:** `grep -n "sanitizeSearchTerm" -A2 lib/validators/keys.ts` — no `%` in the character class means open.
@@ -4112,7 +4184,7 @@ Found by T-velocity-id-lists's 9-agent review and its own measurements. None of 
 - **A failed velocity read still takes the whole units page down, S (a decision).** `app/(app)/properties/[id]/units/page.tsx` awaits `fetchProjectVelocity` (in its `Promise.all`) with no catch: any failed request — a statement timeout, a 504 (postgrest-js retries only 503/520) — replaces the matrix, the price lists and the reprice form with the route's error page. MEASURED by the review with one injected 500: the page threw. Every other read on the page fails it the same way, by design (`unwrapRows`, the project read); the card's own reads are now 2, plus 2 per 100 sold units. Shape: decide the page's error model for an OPTIONAL card — render "Sales velocity could not be read" and report the error (Sentry), or keep failing loudly as everything else on the page does. **VERIFY:** `grep -n "fetchProjectVelocity(supabase, id)" "app/(app)/properties/[id]/units/page.tsx"` with no catch around it means open.
 - **The units page's price-list items stop at 1,000 per version, S.** MEASURED by the review (not re-checked by a skeptic) on v14.5: a project with 1,005 units and a price list of 1,005 items — the page's embed `price_lists?select=…,price_list_items(unit_id, list_price, …)` returned 1,000 items. `itemCount` shows 1,000; `comparePriceLists` (`lib/services/price-list.ts`) sums only what it received, so the total is short; the embed is unordered, so two versions can return different subsets and report units as new or dropped. Shape: read each version's items with `fetchAll` ordered by `unit_id`, or an RPC returning per-version summaries. **VERIFY:** `grep -n "price_list_items(unit_id" "app/(app)/properties/[id]/units/page.tsx"` — a hit means open.
 - **A phase's unit count on the units page comes from an embed capped at 1,000 and filtered after the cap, S.** MEASURED by the review (not re-checked by a skeptic): `units:properties!parent_id(visibility)` returned 1,000 of 1,005; the page counts `visibility !== "archived"` over that array, so a phase past 1,000 shows 1,000, and one with archived units can show too few below it (the cap keeps an arbitrary 1,000 before the filter). Shape: a HEAD count per phase as `countContainerUnits` does, or an aggregate. **VERIFY:** `grep -n "units:properties!parent_id(visibility)" "app/(app)/properties/[id]/units/page.tsx"` — a hit means open.
-- **The properties map reads its pins unpaged and unordered, S.** FROM CODE (the review; not measured): `app/(app)/properties/map/page.tsx` reads the filtered listings with no order and no range — past 1,000 matching non-unit listings the map shows an arbitrary 1,000, possibly different on each load. Far off at today's scale. Shape: `fetchUpTo` with a ceiling and a "showing N of M" notice, or `fetchAll` over a unique order. **VERIFY:** `grep -nE "fetchAll|fetchUpTo|\.range\(" "app/(app)/properties/map/page.tsx"` — no hit means open.
+- ~~**The properties map reads its pins unpaged and unordered, S.**~~ **FIXED 2026-10-18 — DECISIONS `T-crm-review-2026-10-18` (F08), branch `feat/crm-review-2026-10-18` (`69a8344`), NOT YET MERGED: the map page reads every matching row with `fetchAll` over `reference, id` (measured on the pre-F08 page: 1,005 matching rows drew 1,000 pins) and states "N on the map · M without a location". `kind=all` (F04) now brings units onto it too. VERIFY (fixed): the VERIFY below — `fetchAll` at `app/(app)/properties/map/page.tsx:97`, `.range(` at :102.** (original) FROM CODE (the review; not measured): `app/(app)/properties/map/page.tsx` reads the filtered listings with no order and no range — past 1,000 matching non-unit listings the map shows an arbitrary 1,000, possibly different on each load. Far off at today's scale. Shape: `fetchUpTo` with a ceiling and a "showing N of M" notice, or `fetchAll` over a unique order. **VERIFY:** `grep -nE "fetchAll|fetchUpTo|\.range\(" "app/(app)/properties/map/page.tsx"` — no hit means open.
 - **NOTE — the velocity card counts archived units; the page's own list does not.** Pre-existing and unchanged (the review measured old and new identical): `fetchProjectVelocity`'s unit read has no visibility filter, so an archived sold unit counts in "sold", absorption and the total, while the page's header and matrix exclude archived units (the ONE definition, `container-units.ts`). Whether the sale of a since-archived unit should count is a product question; recorded, not changed.
 - **NOTE — offset pages are separate snapshots.** `fetchAll` pages by offset: a row inserted between two pages repeats a row on the next page (the velocity card now counts each unit once; a repeated event changes nothing — the earliest sale wins), and past 1,000 rows a row deleted from an earlier page makes the next page skip one. Each lasts one render. Keyset paging would close it; not worth it for one render today.
 
@@ -4277,6 +4349,8 @@ Its first item is not a site: it is the refusal rule this change added, which is
     - `grep -n -A5 "^  await logEvent(" lib/actions/viewings.ts lib/actions/tasks.ts lib/actions/buyer-requirements.ts | grep -E '"(created|requirement_added)"'`
     - `grep -n -A5 "^  await logEvent(" lib/actions/units.ts | grep payment_plan_created`
     - `grep -n -A5 "^    await logEvent(" lib/actions/deals.ts | grep '"created"'`
+  - *2026-10-18 (A02 — DECISIONS `T-crm-review-2026-10-18`, branch `feat/crm-review-2026-10-18`, not yet merged): **the `quickAddTask` site is closed.** A saved task whose event fails returns `NOT_RECORDED_NOTICE` / `NOT_CONFIRMED_NOTICE` through `record()` (`lib/actions/tasks.ts`) and is never undone, so the first grep above now prints two lines (viewings, buyer-requirements): four hits in all. Four sites stay open.*
+  - *A04 (same branch) adds a way to a second saved search that is not a retry: "Save brief as search" (`saveSearchFromEnquiry`) checks for an active search and then inserts, so two concurrent presses can both insert. Nothing unique refuses it (see "What the copy costs" above).*
 
 - **A retried enquiry, contact or mandate files a second one, M.**
   - **The sites:**
@@ -4392,6 +4466,7 @@ Its first item is not a site: it is the refusal rule this change added, which is
   - **Why it is milder.** The user sees the error, and a retry re-runs the whole action, which heals it.
   - **Shape (decide):** the note's RPC before the UPDATE; or, on `noteErr`, still recompute and revalidate and say the contact time was saved without its note.
   - **VERIFY:** `grep -n "if (noteErr) return { error: noteErr.message, savedAt: null };" lib/actions/deals.ts` — a hit means open (:896 on 2026-10-14).
+  - *2026-10-18 (A06-b — DECISIONS `T-crm-review-2026-10-18`, migration 0155, branch `feat/crm-review-2026-10-18`, not yet merged), on the first shape: the deals UPDATE's `.select("id")` is also the permission check, so calling the note's RPC first would log a note on a deal the user cannot update. And since 0155 the RPC takes `p_outcome`: the new release against a database without 0155 fails here (PGRST202) AFTER the UPDATE committed, which is why hosted 0155 before the release is mandatory (0155's header). The line is at `deals.ts:947` on that branch.*
 
 - **NOTE — a failed `logEvent` does not say whether its line was written.**
   - `EventWriteError.refused` is true only when the answer carried a SQLSTATE or PostgREST code (`lib/services/events.ts:73-81`). That is wider than `certainlyRolledBack`; see this section's first item.
@@ -4601,6 +4676,9 @@ Every VERIFY below was run on origin/main `447c5bc` on 2026-10-15; the branch fi
   - the merge's KYC backfill ("A contact merge repoints deals without a health recompute …", above).
   - **Shape** for the first: after its proven write, when `column === "title_deed_status"`, `recomputeDealsFor(supabase, { propertyId })` per unit written (the session client; the helper runs as the system).
   - **VERIFY:** `grep -c "recomputeDealsFor\|recomputeDealHealth" lib/actions/unit-inheritance.ts` — `0` means open (`0` on origin/main `447c5bc`).
+  - **A third writer, the nightly mandate expiry, M (A09, 2026-10-19 — DECISIONS `T-crm-review-2026-10-18`).** `expire_mandates` flips mandates without recomputing a deal (T4.5), so an open deal keeps "Mandate active 15/15" until its next deal-side save. A09's "Checklist assessed <time>" line now shows the snapshot's age on the deal page and the board.
+    - **Shape:** pg_cron → pg_net → `/api/internal/deal-health` behind `CRON_SECRET` (the 0103 hop), calling `recomputeDealsFor(supabase, { propertyId })` for the properties whose mandate changed after an open deal's `health.computed_at`. That is a 13th cron, so `EXPECTED_CRON_JOBS`, rls test 50, `verify-restore.sql` and docs/10 move with it. Not an SQL recompute RPC (AUDIT_2026-10-17:69). Check first that no session holds `lib/actions/mandates.ts` (T-document-insert-outcome did on 2026-10-18).
+    - **VERIFY:** `ls app/api/internal` — no `deal-health` means open (only `enquiry-alerts` on `feat/crm-review-2026-10-18`).
 
 - **NOTE — the post-deploy read for `T-lm-health-recompute`** is in its DECISIONS entry ("After the deploy"): one read-only aggregate on hosted comparing each open deal's stored title-deed factor with its property. NOT run at landing (hosted reads are the operator's; HANDOFF, What next). It was run on the local stack: 0 / 0, and 2 / 1 on a rolled-back plant.
 
@@ -4847,6 +4925,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - shape-only tags `{operation, code}` and ids-only extras;
     - called beside each raw return, starting with legal, evidence, payment and erasure paths.
   - **VERIFY:** `grep -L 'Sentry\.' $(ls lib/actions/*.ts | grep -v '\.test\.ts') | wc -l` gives `29`. Falling toward 0 means fixed.
+  - *A08-S2 (2026-10-18, DECISIONS `T-crm-review-2026-10-18`) adds the words half: a `userMessage(error, fallback)` in the same module, so the raw `error.message` returns become sentences — 42501 "You don't have permission for this", 23505 "That already exists", 22P02 "That link is not valid" — adopted one site at a time (the review did not sweep them). A network failure must NOT be worded "nothing was changed": a lost answer may have committed (`certainlyRolledBack`; DECISIONS `T-refusal-allowlist`), so it says the change could not be confirmed.*
 
 - **An erasure or purge that committed but whose hash-chained record failed is told only in a 4-second toast, S.** (OBS-2)
   - `contact-erasure.ts:439-446` (marker), `:485-494` (`retention_purged`) and `lib/services/erasure-run.ts:260-265` (`erased`) return a sentence, and nothing pages. The counts an administrator needs to write the missing line exist only in the toast.
@@ -4936,6 +5015,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
   - The reviewed draft is `docs/blueprints/T-match-pitch-0148.md`.
   - Its decisions: the go-ahead; the ledger or no-migration version; whether `consent_marketing` gates a pitch; EL/RU templates.
   - Do not build the pasted prompt's ">5% drop" threshold or its "mandate goes active" trigger: both contradict `match-alerts.ts` design notes.
+  - *2026-10-18 (A04, DECISIONS `T-crm-review-2026-10-18`): the match → proposal → viewing path now exists without a pitch (a buyer-bound proposal minted from a match row, handed over by the agent). The blueprint's migration number is taken (0148, and 0152–0155 by that branch): if it is built, renumber it at the next free number and re-measure its preflight pins.*
 - **Commission radar (add-on #4, M).** A stale-listing nudge (zero viewings in N days), a 30/14/7 renewal countdown, "slip signed, no offer in N days", and a pushed alert when a sweep fails. It would be noise until viewings exist (hosted: 0).
 - **AI listing copy (add-on #5, M → XL).** Draft → human review → `saveProperty`: Phase 3 M12, "nothing AI-drafted is sent or published automatically". Property fields only. Showing RU/EL needs gnk-web i18n.
 - **Whisper link (add-on #2, L) and route optimiser / live tracker (add-on #3, XL).** Not recommended:
@@ -4958,6 +5038,7 @@ Left open by `T-portal-feed-integrity` (branch `fix/portal-feed-integrity`, migr
 - **The share-link half of ANON-1, M (migration).** `resolve_share_link` and `submit_proposal_interest` still compare their argument to the stored `token_sha256`, so a copy of `share_links` opens every live proposal. Same shape as the portal fix: new resolvers that take the TOKEN and hash it in SQL, the app switches, then a contract migration drops the old ones; existing links keep working because the column is unchanged. **VERIFY:** `grep -n 'where token_sha256 = p_token_sha256' supabase/migrations/0146_share_link_tenant_binding.sql` — a hit while 0146 is the last migration naming `resolve_share_link` means open.
 - **Make a JPEG-less photo impossible at write time, S (migration).** A photo row with `path_full` and no `path_jpeg` is invisible to every portal, and if it takes a listing under its portal's photo minimum the listing leaves that feed. No app path writes one today (the upload, the importer and the backup all carry `path_jpeg`), and `scripts/media/backfill-jpeg.mts` skips rows it cannot convert. A validated `CHECK (kind <> 'photo' or path_full is null or path_jpeg is not null)` would prevent it; it needs a preflight count and fixture changes in `rls.test.ts`, `media-path-bound.test.ts` and `portals.test.ts`, which insert such rows on purpose. The feed does NOT withhold over it (decided — a 503 keeps a portal's whole copy, sold listings included); the settings page counts unprepared photos and every pull records `rendition_gaps`. **VERIFY:** `grep -n "path_jpeg is not null" supabase/migrations/*.sql | grep -i check` — no hit means open.
 - **The Details form erases feature values it has no checkbox for, S.** `detail-forms.tsx` renders only `PROPERTY_FEATURES` and the save writes back the checked keys, so an imported value such as the template's `pool` (`docs/samples/properties_import.csv`) vanishes at the next Details save, recorded only in the event diff. The importer accepts any string (`validators/properties.ts` `features: z.array(z.string())`). Decide: refuse or map non-keys at import, or render unknown values so the form keeps them. **VERIFY:** `grep -n "features: z.array(z.string())" lib/validators/properties.ts` — a hit means open.
+  - *F02 (2026-10-18, DECISIONS `T-crm-review-2026-10-18`) measured the import side: `scripts/import/properties.mts` stores `features: list(r.features)` as given (`pool;garden` → `{pool,garden}`). The import half of the fix is to refuse a cell holding a key outside `FEATURE_KEYS` and name the column. Since 0152 a `storage_room` key also sets `has_storage`, so a typo there decides the storage fact too.*
 - **A cached 200 outlives a Disable or a Regenerate for up to five minutes, S.** The feed's 200 is `public, max-age=300` and keyed by URL; the disabled answer is no-store but a copy cached just before the switch is served until it expires, and so is the old URL's after a rotation. A query string also bypasses the cache, so a token holder can make every request reach the database. Options: `s-maxage` with a purge on toggle/rotate, or no edge cache (portals pull at most three times a day). Measure on a preview first — never on a production `/api/portals/` URL.
 - **"Last requested" is any caller with the token, by design, S (documentation).** The pull record is service_role-only since 0150, so nobody can WRITE a count or an outcome, but anyone holding the URL can still request it and refresh `last_pulled_at` with a user-agent of their choosing. The settings page says "the feed URL was last requested (reported as …)", never "the portal pulled"; stale detection is the signal that holds.
 - **Share-link and availability-link URLs are still built from the browser's origin, S.** `components/features/share-links/minted-link.tsx` has the shape finding 8 fixed for portals; reuse `lib/services/portals/feed-origin.ts`'s origin rule (it is not portal-specific) if a link minted on a preview ever matters.
@@ -4968,3 +5049,147 @@ Left open by `T-portal-feed-integrity` (branch `fix/portal-feed-integrity`, migr
 - **Publication cannot be verified, and reconciliation needs a provider channel.** No portal reports back: JamesEdition's Listings page (Pending review / Refused / Published) has no export or API. Price/status reconciliation and "still live after withdrawal" detection need one; the JamesEdition leads pull (milestone 3) would give a weak positive signal (a lead naming a reference). Portal performance reporting needs `leads.portal` (milestone 3) before it can attribute anything.
 - **Store a photo's DISPLAYED size, S.** `processPropertyImage` (`lib/services/media.ts`) returns sharp's header size, taken before the EXIF `.rotate()`, so `property_media.width/height` are transposed for a rotated phone photo. Portal eligibility compares long and short sides, which is exact up to 1600 px either way round (T-portal-feed-integrity), but the stored value is still wrong for anything else that reads it. sharp 0.35's `metadata().autoOrient` gives the displayed size for new rows; existing rows cannot be corrected without the original bytes. **VERIFY:** `grep -n "autoOrient" lib/services/media.ts` — no hit means open.
 - **Stale comments seen in passing:** `lib/validators/media.ts` says floor-plan renditions land in the public bucket (contradicted by `media-bucket.ts`).
+
+## CRM review — 2026-10-18 (T-crm-review-2026-10-18)
+
+Left open by `T-crm-review-2026-10-18`: another AI's read-only walkthrough of production, verified item by item, and the 17 findings (F01–F08, A01–A09) built on branch `feat/crm-review-2026-10-18` — NOT YET MERGED, and migrations 0152–0155 are NOT YET ON HOSTED. Line numbers are that branch's (`d338042`). The operator's decisions come first, then the follow-ups the streams found and did not build. Follow-ups the integration commits already fixed are not listed (the deal page's offers read, the chat-link title, the hard-coded 50% relief label, white text on `--accent-500`, the two `<h2>` → `<h3>`, the drawer's Close ring, the thrown retry/recovery refusals, the properties header count, the contact portfolio read, the stale comments, the timeline-visibility residue, the red unit files).
+
+**Closed or amended elsewhere in this file by the same branch.** Struck: "Properties list: column sorting …" (A03; its `?tab=` half landed with #175), "Admin visibility into org-wide overdue tasks and unassigned leads" (A01), "The properties map reads its pins unpaged and unordered" (F08), "A Beds filter past int4 crashes …" (A03), "`report_stage_conversion` counts a `stage_changed` whose payload is `{}` …", "The performance page paints four other reports' failures …" and "'Stages are matched by name …' is false since 0067" (F06). Sub-bullets added to: finding 3 "Units flood the properties list" (F04), the 2026-08-25 quality-score worklist (F03), the Tasks and Contacts follow-ups lines (A01/A02, A04), "Phase 1 — the constraint migration" (A05), "A contact's enquiries are listed nowhere" (A06), "Phase 3 — review state …" (LST-09), "Sessions can still attach records to an erased contact" (A04), "A retried offer, viewing, payment plan, task or saved search files a second one" (A02, A04), "`logDealContact` RETURNS after its deals UPDATE committed …" (A06-b), "Health inputs written with no fan-out" (A09), "Server actions return DB/storage failures without reporting them" (OBS-1, A08), "Matching pitch (add-on #1)" (A04), "The Details form erases feature values it has no checkbox for" (F02).
+
+**Operator decisions**
+
+- **LST-09 — should a missing website essential block a new transition to public? — NEEDS AN OPERATOR DECISION.** (F03)
+  - Since F03 every screen says which essentials a listing lacks (cover photo, English title, price; "units priced" for a container), apart from its completeness score, and the dashboard's Listing health says it in words. The publish gate still checks the score only. Production's three public listings have no photo (0 `property_media` rows, 2026-10-18).
+  - **Ready to build once decided (F03 Part F):** in `updatePropertySection`'s `goingPublic` branch (`lib/actions/properties.ts`), refuse when `essentialsMissing.length > 0`; decide whether an admin may override; the `publish_override` payload becomes `{score, threshold, essentials: [keys]}`, with its `EVENT_LINES` line, the en/el/ru `events.*` keys and an `event-payload-privacy.test.ts` entry. A listing already public is never unpublished by it (T-c3).
+  - The same question is the LST-09 half of "Phase 3 — review state, hierarchy, feed grouping" (Data integrity audit — 2026-09-15). Close both.
+  - **VERIFY:** `grep -c "essentialsMissing" lib/actions/properties.ts` — `0` means the gate does not refuse on essentials (open).
+
+- **0152 waits on two storage-room conflicts on hosted: PAF0001 and PAF0004 — NEEDS AN OPERATOR DECISION.** (F02)
+  - Both hold `has_storage = true` (the Areas & rooms box ticked) and no `storage_room` feature (read 2026-10-18). Which is true is a person's call: 0152's preflight refuses the whole file while any row disagrees, names it, and never picks a side.
+  - **Operator:** on each listing's Details tab, IN THE RELEASE NOW SERVING (both boxes are still shown there), tick or untick both alike. Every such save is evented. Then 0152 applies and the branch merges straight after (0152's header, DEPLOY ORDER). Do not leave it for the new release: it shows the column nowhere, and an unrelated Details save would settle the row in the feature's favour with nobody deciding.
+  - **VERIFY (hosted, read-only):** the conflict query in 0152's header (EXISTING DATA) — 0 rows means settled.
+
+- **Land utilities: a stored "No" may be the old checkbox's default — NEEDS AN OPERATOR DECISION.** (F07)
+  - Before F07, water and electricity were checkboxes, so every Details save of a land row wrote `false` for an unticked box. Since F07 they are Yes / No / Not known, and a stored `false` shows as "No". No code can tell a real "No" from that default: the column keeps no trace, and F07 ruled out a migration.
+  - Options: clear `false` to NULL ("Not known") on land rows as a one-time data fix (decide whether each change is evented), or keep the values and let the desk correct them on sight.
+  - **VERIFY (hosted, read-only):** `select reference, water_available, electricity_available from public.properties where property_type = 'land' and (water_available = false or electricity_available = false)` — the rows in question.
+
+- **Proposal audience: should VIP, partner and coming-soon listings need a "this buyer may see it" confirmation? — NEEDS AN OPERATOR DECISION.** (A04)
+  - Today only an `off_market` listing asks ("This buyer may see off-market listings") before it goes into a buyer-bound proposal; VIP, partner and coming-soon carry a chip only. There is no per-contact model of who may see what.
+  - **VERIFY:** `grep -n "off_market" lib/services/match-proposal.ts` — the rule lives there; a confirmation for the other three would add their keys beside it.
+
+- **Should deal health follow the chase-up threshold? — NEEDS AN OPERATOR DECISION, S.** (A09)
+  - The operator decided on 2026-08-25 (0052) that it does not, because coupling would need a mass recompute of stored scores. Since A09 the activity factor is applied at read time, so that reason is gone: coupling is a small change in `activityFactor()` (`lib/services/health-score.ts`).
+  - Note what each counts: health reads `last_activity_at` (any saved change), the chase-up `last_contact_at` (logged contact, 0025). The defaults already agree at 14 days. Settings → Nudges states the current rule.
+  - **VERIFY:** `grep -n "days <= 7\|days <= 14" lib/services/health-score.ts` — two hits (`activityFactor`, :139-140) mean the fixed scale, unchanged.
+
+- **Task priority, recurring tasks and e-mail reminders — NEEDS AN OPERATOR DECISION (deferred by A02).**
+  - **Priority** needs a migration (`tasks.priority text not null default 'normal' check (priority in ('normal','high'))`, sorted high-first within a day). Deferred: production holds 0 tasks a person made, and the need is unproven.
+  - **Recurring tasks** need a `task_series` table, a unique `(org_id, series_id, occurrence_date)` and a nightly spawner that mints idempotently. Deferred: the recurring obligations the business has (mandate renewal, instalments, holds, feedback, key recall) are already cycle-keyed sweeps, and a generic engine beside them risks duplicates.
+  - **E-mail and push reminders:** doc 02 says Phase 1 reminders are in-app tasks only, and the Resend sender domain is parked. Revisit in Phase 2–3 once the domain is verified.
+  - **VERIFY:** `grep -n "tasks.priority\|add column priority\|task_series" supabase/migrations/*.sql` — no hit means neither table change is built.
+
+- **Payment-plan scope for a unit under a phase — NEEDS AN OPERATOR DECISION.** (A05)
+  - The property page offers a unit only its parent's plans (`planScopeId = p.parent_id ?? p.id`), so a unit under a phase sees the phase's plans and never the project's. Do plans differ by phase on purpose? If not, read `.in("project_id", [phase, project])` (at most three ids).
+  - **VERIFY:** `grep -n "planScopeId" "app/(app)/properties/[id]/page.tsx"` — `parent_id ?? p.id` alone means unchanged.
+
+- **Attribute future won and lost closes to the stage they left — NEEDS AN OPERATOR DECISION.** (F06)
+  - Since 0154 stage conversion is per pipeline and direction, and closes are listed unattributed, because a past close cannot be traced to a stage. Future ones could be: `close_deal`'s won and lost payloads would record `from_stage_id` (`v_deal.stage_id`, read under the lock).
+  - `close_deal` is the guarded 0118 definer (its tripwires, rollback floor `aa01ef8`), so this is its own change, hosted first.
+  - **VERIFY:** `grep -c "from_stage_id" supabase/migrations/0118_deal_close_only_through_close_deal.sql` — `0` while 0118 is the last migration replacing `close_deal` means not built (`from_stage_id` in other files is `stage_changed`'s).
+
+- **Commercial types graded on bedrooms and bathrooms — NEEDS AN OPERATOR DECISION.** (F07)
+  - Shop, office, warehouse, hotel, building, mixed_use and other keep the built Details layout and the "bedrooms + bathrooms" score item. Changing the weight for them changes stored scores, so it needs `npm run recompute:scores` after the change.
+  - **VERIFY:** `grep -n 'key: "rooms"' lib/services/quality-score.ts` — one hit (:210), the else of the `input.isLand ?` branch, means unchanged: every type that is not land or a container is graded on rooms.
+
+- **Portal adapters for Bazaraki Pro, RERA.cy, Thribee and Prian need the portals' official specifications and accounts — NEEDS AN OPERATOR DECISION (supply them).** (A07)
+  - The review refused to guess a format. Bazaraki publishes none (a Pro account brings the spec and its id lists); RERA's v2 is public but going live needs a RERA account, approval of a test feed and a numeric listing id; Thribee needs the website's listing-URL pattern; Prian needs its XML format. The build itself is "Portal syndication milestone 2" (Portal syndication — 2026-09-14); `/settings` lists all four as not built.
+  - **VERIFY:** `ls lib/services/portals/dialects/` — no `rera.ts`, `trovit.ts`, `bazaraki.ts` or `prian.ts` means none is built.
+
+- **Smaller decisions the streams left, each S or XS.**
+  - **`published_below_threshold()` (0066) has no app reader since F03** (the dashboard reads the worklist's fresh computation). Keep it as an SQL cross-check, or drop it with a migration; do not drop it silently. **VERIFY:** `grep -rn "published_below_threshold" app components lib --include=*.ts --include=*.tsx | grep -c "rpc("` — `0` means no reader.
+  - **The contact portfolio's asking total includes sold units and withdrawn listings** (F04 excluded archived rows only). Should "asking total" mean on-market stock only? The rule is written once, in `lib/services/contact-portfolio.ts` (the asking-total comment, :91).
+  - **The quality score under a narrowed mandate read** (A08-P3). The property page and the worklist score `mandateActive` from `mandates_safe`, which shows an agent only the mandates of properties assigned to them, so an unassigned agent's ring and readiness panel count "Active mandate" missing when one exists (the summary strip's Outstanding already says the mandate is not visible). Options: show such readers the stored `quality_score`, or answer mandate existence through a definer; either changes what feeds the stored score, the worklist and the gate.
+  - **Presence vs measure in matching** (F02): `veranda`, `roof_garden` and `covered_parking` are features, `veranda_sqm` and `roof_garden_sqm` measures; they are not duplicates and stay apart. Matching could read a measure above 0 as meeting the feature at read time.
+  - **Archived phases on the units page** (A05): `PhasesSection` lists them with their counts, while the overview and the availability table leave them out. Hide them, or mark them "archived". **VERIFY:** `grep -n -A6 '.eq("kind", "phase")' "app/(app)/properties/[id]/units/page.tsx" | grep -c visibility` — `0` means unchanged.
+  - **Stored `cyprus_config` descriptions** still say "nightly sweeps … see 0052" (nudge_thresholds) and "two-minute alert sweep" (lead_escalation). They now sit under Technical details (A08); rewording them is a data migration.
+  - **An outcome-aware worklist** — buyers whose last logged contact is "Message sent, no reply yet" for N days (A06-b). An idea only: a nudge or report change that needs its own decision.
+
+**Follow-ups — properties**
+
+- **Furnished and partly furnished can both be ticked, S.** (F02) Hosted PAF0002 and its six units carry both. Probe first, then a `superRefine` in `detailsSectionSchema` refusing the pair. **VERIFY:** `grep -c "partly_furnished" lib/validators/properties.ts` — `0` means open.
+- **The property page reads every `reservation_installments` and `payment_plans` row of the organisation, S.** (A05) `app/(app)/properties/[id]/page.tsx:269-279` filters them in memory; past `max_rows` (1,000) both are cut silently. Filter the instalments by the live hold's id and the plans by the scope ids, or page them. **VERIFY:** `grep -n -A5 'from("reservation_installments")' "app/(app)/properties/[id]/page.tsx" | grep -c '\.eq(\|\.in('` — `0` means open (the same for `payment_plans` with `-A4`).
+- **The properties CSV has no building-density column, S.** (A03) The list filters by density and shows it on land lists. Adding a column changes the header pinned in `tests/e2e/properties-export.spec.ts`. **VERIFY:** `grep -n "density" lib/services/property-export.ts` — no hit means open.
+- **Coverage-ratio filter, S, on request.** (A03) `coverage_ratio_pct` exists; a filter is one line each in `propertyFiltersSchema`, `applyPropertyListFilters` and the export vetting (its type forces the vetting line). **VERIFY:** `grep -c "coverage_min" lib/validators/properties.ts` — `0` means open.
+- **Matching scores an unknown VAT preference against an unknown status as a match, S.** (F01) `lib/services/matching.ts:425` judges `c.vat_status === req.vat_preference`, so `unknown == unknown` earns the points; since F01 an unconfirmed status is not an answer. Do not reward it (and decide whether "Unknown" should be offered as a preference at all, `requirements-card.tsx`). **VERIFY:** `grep -n "c.vat_status === req.vat_preference" lib/services/matching.ts` — a hit with no `unknown` guard beside it means open.
+- **One set of VAT status words, XS.** (F01) Reuse `VAT_STATUS_LABELS` in `components/features/contacts/requirements-card.tsx`, `party-defaults-form.tsx` and `components/features/properties/create-wizard.tsx`, so "Unknown (not confirmed)" reads the same everywhere. **VERIFY:** `grep -c "VAT_STATUS_LABELS" components/features/contacts/requirements-card.tsx components/features/contacts/party-defaults-form.tsx components/features/properties/create-wizard.tsx` — `0` each means open.
+- **Land planning fields in the create wizard, S, optional.** (F07) `createPropertySchema`, the `createProperty` insert and the draft keys. **VERIFY:** `sed -n '/^export const createPropertySchema/,/^});/p' lib/validators/properties.ts | grep -c planning_zone` — `0` means open.
+- **A container's readiness panel could list the units that inherit its contradiction, S, optional.** (F03) The worklist already groups them; the page only tells the unit where to look.
+- **The property summary's Next action task is not a link, XS (waits on a task view).** (A08-P3) Tasks have no detail page, and `/tasks` lists the viewer's tasks only. **VERIFY:** `ls "app/(app)/tasks"` — no `[id]` means still blocked.
+- **The portal fixture holds a state the database can no longer hold, XS.** (F02) `lib/services/portals/dialects/__fixtures__/listings.ts:49` has `has_storage: true` with features lacking `storage_room`; since 0152 the trigger would make it false. Align it. **VERIFY:** `grep -n "has_storage: true" lib/services/portals/dialects/__fixtures__/listings.ts` — a hit beside features without `storage_room` means open.
+- **gnk-web: check two things the CRM's feed now means, S (gnk-web; not read from here).** (F01, F02) The site may print both `has_storage` and a `storage_room` feature label, which now always agree, so storage would read twice; and the feed carries the raw `vat_status` (0088), so any VAT wording on the site must treat `unknown` as not confirmed.
+- **NOTE — a new trigger on `properties` must update 0143's and 0152's expected trigger sets together.** Both preflights pin the full set of user triggers on the table (the restore pack's 0152 INTEGRITY row checks only 0152's own trigger, so it needs no update), and 0143's replay tests revert 0152 first (`supabase/tests/unit-status-actions.test.ts`, `backToBefore0143()`).
+- **NOTE — the map's "cannot draw" path is proven by a `getContext` stub, not a real GPU-less browser.** (F08) One manual check after the deploy: Chrome with `--disable-3d-apis`, `/properties/map`, expect the "This browser can't draw the map — WebGL2…" alert and the list. No test forces the pins worker to fail (it would need a stub MapLibre worker); `mapErrorOutcome`'s unit cases cover the rule. In Sentry a failed map is tagged `area=property-map` with its `stage`; a burst of `stage=style` means OpenFreeMap is down or the CSP lost its origin.
+
+**Follow-ups — deals and reports**
+
+- **⌘K global search has no Deals group, S.** (F05) `searchEntities('deal', q)` already exists; wire it into `components/features/shared/global-search.tsx`. **VERIFY:** `grep -ci "deal" components/features/shared/global-search.tsx` — `0` means open.
+- **The contact page's Deals and Viewings tabs show the newest 50 and count "(50)", S.** (F05, A06-a review) The history and the strip now read every id; the tabs do not. Link the Deals tab to `/deals?contact=<id>` and say when more exist. **VERIFY:** `grep -c "\.limit(50)" "app/(app)/contacts/[id]/page.tsx"` — `2` means open.
+- **The deals CSV has no deal id or link column, S.** (F05) `/pipeline/export` and `/deals/export` share `dealCsvColumns`, and `tests/e2e/deals-export.spec.ts` pins the header. **VERIFY:** `grep -c 'header: "Id"\|header: "Link"' lib/services/deal-export.ts` — `0` means open.
+- **The deal page's back link goes to `/pipeline` only, XS.** (F05) **VERIFY:** `grep -n '<Link href="/pipeline">' "app/(app)/deals/[id]/page.tsx"` — a hit (:194) means open.
+- **`/deals` has no "most recently closed first" order, S, on request.** (F05) It would need a generated close column; the closed-range filter covers the need today.
+- **An over-long search arriving by URL is not refused on `/deals` or `/contacts`, S.** (F05) The boxes cap typing at 200 characters; a crafted URL is not bounded (the Keys register refuses one in words, T-keys-search-length). **VERIFY:** `grep -n "q: q ? q : undefined" lib/queries/deals-list.ts` — a hit (no length check) means open.
+- **The Keys filter bar resets a box on its own echo and can drop an in-flight search, S.** (F05 review) `components/features/keys/filters.tsx` has the pattern the deals bar had: a debounced write landing mid-typing resets the box, and a select built on the rendered URL drops a search still on its way. Port `FilterUrlWriter` (`components/features/deals/filter-url-writer.ts`). **VERIFY:** `grep -c "FilterUrlWriter" components/features/keys/filters.tsx` — `0` means open.
+- **`report_citation`'s `scope` key says "own" for every non-admin, listing managers included, XS.** (F06) The page no longer reads it, and it is misleading. Restate it or document it. **VERIFY:** `grep -n "'scope', case when" supabase/migrations/0065_reporting_engine.sql` — a hit while 0065 is the last migration replacing `report_citation` means open.
+- **`/reports/performance` and its export ignore the name lookups' errors, XS.** (F06) The agent-name and property-reference `.in()` reads fall back to ids; a degraded display, not a substituted zero. **VERIFY:** `grep -n "const { data: profileRows }" "app/(app)/reports/performance/page.tsx"` — a hit (:98) means open.
+- **NOTE — the stored `deals.health_score` is the write-time snapshot.** (A09) For an idle open deal it is higher than what the board and the deal page show. Any new reader (SQL, report, export) applies `liveHealth`'s rule or says it shows the stored value.
+- **NOTE — the `/deals` property picker offers live listings only.** A deal on a retired listing is found by searching its reference in the title; the picker's empty text says so.
+
+**Follow-ups — home and tasks**
+
+- **`tasks.assignee_id` is not organisation-keyed, S (migration).** (A02) The app verifies the assignee through RLS, but a direct PostgREST insert or update can still name another organisation's profile (docs/04). Shape: an `(org_id, assignee_id)` foreign key to `profiles (org_id, id)`, MATCH SIMPLE, NO ACTION, with a preflight that aborts on cross-org rows (the 0119 house shape). **VERIFY:** `grep -n "(org_id, assignee_id)" supabase/migrations/*.sql` — no hit means open.
+- **The leads inbox offers no "Add task" on a lead, XS.** (A02) `quickAddTask` already accepts and checks `lead_id`; mounting `<AddTaskDialog entity={{ lead_id }} />` on the lead row is the only step. **VERIFY:** `grep -rln "AddTaskDialog" components/features/leads` — no hit means open.
+- **A task edit whose PATCH commits after its read-back has no event, S.** (A02 review) `updateTask` re-reads an unconfirmed edit and says SAVE_UNCONFIRMED when the row does not hold it; a request PostgREST finishes after that read lands with no `updated` or `assigned` line. The same residual class as the other unconfirmed writes; an operation id (the 0142 shape) would close it. **VERIFY:** `grep -c "op_id" lib/actions/tasks.ts` — `0` means open.
+- **A refused quick add or task edit clears what was typed, S (app-wide, pre-existing).** React 19 resets an uncontrolled form after any action submission, so every `useActionState` form loses its input on a refusal. The portal settings form avoids it by submitting inside a transition. FROM CODE.
+- **`admin_dashboard_stats` still returns the unread `property_statuses` key, XS.** (F04-C) Drop it the next time the function is replaced, with the tests that pin it: `supabase/tests/dashboard-archived.test.ts`, `dashboard-won-value.test.ts:309`, `rls.test.ts:1587`. **VERIFY:** `grep -c "'property_statuses'" supabase/migrations/0140_dashboard_won_final_value.sql` — `2` while 0140 is the last migration replacing the function means open.
+
+**Follow-ups — contacts and leads**
+
+- **Three more "Throws after a commit" sites on the logged-conversation paths, S.** (A06-b, pre-existing) Not among the 38 sites of "Throws after a commit — 2026-10-13".
+  - `logDealContact`'s no-note path commits `last_contact_at` / `last_activity_at`, then a bare `await logEvent` can throw instead of returning `NOT_RECORDED_NOTICE` / `NOT_CONFIRMED_NOTICE`.
+  - `logContactConversation`'s no-note path (event-only, DB-11a) throws on a failed event instead of returning `{ error }`.
+  - `logConversation` stamps `first_response_at` before `log_conversation` runs, so a failed RPC leaves the stamp and shows an error.
+  - **VERIFY:** `grep -n -A6 "^    await logEvent(supabase, {" lib/actions/contacts.ts lib/actions/deals.ts | grep -c '"conversation_logged"'` — `2` means the first two open; `awk '/^export async function logConversation/,/^}/' lib/actions/leads.ts | grep -n 'first_response_at: new Date\|rpc("log_conversation"'` printing the stamp first means the third open.
+- **Dead `revalidatePath(`/leads/${id}`)` calls, XS.** `logConversation` and `logChatLinkOpened` revalidate a route that does not exist. **VERIFY:** `grep -c 'revalidatePath(`/leads/\${' lib/actions/leads.ts` — `2` means open.
+- **No DB test renders `/contacts/[id]`, S.** The portfolio's paging (a developer past 1,000 units) is checked only by the typecheck. A page-level DB test with more than 1,000 developer units would close that. **VERIFY:** `grep -rln 'contacts/\[id\]/page' supabase/tests` — no hit means open.
+- **The evidence report does not count a buyer-bound proposal as introduction evidence, S.** (A04) `lib/services/evidence.ts` lists no `share_links` row with `contact_id` = the buyer. **VERIFY:** `grep -c "share_links" lib/services/evidence.ts` — `0` means open.
+- **`share_link_properties` has no index on `property_id`, S (migration, when volume grows).** (A04) The primary key leads with `share_link_id`, so `proposalsForProperty` scans; trivial at production's 2 links. Add it with the md5-guarded recipe. **VERIFY:** `grep -n "index.*share_link_properties.*(property_id" supabase/migrations/*.sql` — no hit means open.
+- **A double click can mint two proposal links, S.** (A04) Each Create proposal mints a new 14-day link; there is no operation id (blueprint decision 7), and the button is disabled only while the request is pending. **VERIFY:** `grep -c "op_id" lib/actions/share-links.ts` — `0` means open.
+- **NOTE — `readActorNames` sends a feed's authors as one `.in("id")` list** (`lib/services/entity-timeline.ts:385`). Bounded today because every caller's limit is at most 100 (`IDS_PER_READ`); slice it if a caller ever passes a larger limit.
+
+**Follow-ups — settings and shell**
+
+- **The overview's Portals row predates `T-portal-feed-integrity`, S.** (A07) It is a static list written while the portal rewrite was in flight; consume a read-only summary of the portals (available, enabled, pending reasons, unprepared photos) now that 0150/0151 have landed, in the portal work's own words. **VERIFY:** `grep -n "scheduled for portal milestone 2" lib/services/activation-readiness.ts` — a hit means the static row.
+- **The lead-routing, lead-escalation and organisation settings pages read without checking `error`, S.** (A07) A failed read renders an empty list or name instead of "Could not check". **VERIFY:** `grep -n "members ?? \[\]" "app/(app)/settings/lead-routing/page.tsx" "app/(app)/settings/lead-escalation/page.tsx"` and `grep -n "const { data: org } = await supabase" "app/(app)/settings/organization/page.tsx"` — hits mean open.
+- **`enquiryAckConfigured` misses resend.dev subdomains, S (a behaviour change).** (A07) It keeps `/@resend\.dev\b/i`, while `isResendTestDomain` catches subdomains; use `senderDomain` + `isResendTestDomain`. **VERIFY:** `grep -n '@resend\\.dev\\b' lib/services/enquiry-ack.ts` — a hit (:76) means open.
+- **Hydration on `/settings` under Next 16.3.8 is unchecked, S (a browser check).** (A07) The sender row streams behind Suspense, the known T3.5 hydration-freeze trap; at worst its links become full page loads. Check once in a browser after the deploy.
+- **The "Admins only" settings screen has no heading, XS.** (A08-S1) **VERIFY:** `grep -n '<p className="text-sm font-medium text-text-1">Admins only</p>' "app/(app)/settings/layout.tsx"` — a hit means open.
+- **Copy still technical, XS each.** (A08-S2)
+  - `app/global-error.tsx` says "Something went wrong" and shows no digest reference; reuse `PageLoadError`'s words, keeping its own html/body. **VERIFY:** `grep -n "Something went wrong" app/global-error.tsx` — a hit means open.
+  - `saveCyprusConfig`'s shape refusals ("transfer_fees shape invalid: needs bands[{up_to,rate}] + relief_pct.") fit the raw JSON editor but could use the config titles. **VERIFY:** `grep -c "shape invalid" lib/actions/settings.ts` — `2` means open.
+  - Portal copy: "No renderer in this build, so it cannot be enabled yet." (`components/features/settings/portal-card.tsx:354`) and "run `npm run media:backfill-jpeg`" (`app/(app)/settings/portals/page.tsx:127`). **VERIFY:** `grep -n "No renderer in this build\|npm run media:backfill-jpeg" components/features/settings/portal-card.tsx "app/(app)/settings/portals/page.tsx"` — hits mean open.
+  - Comments quoting the old boundary copy: `lib/services/pipeline-move.ts:10`, `lib/supabase/clock-skew.ts:3`.
+- **The escalation chip's "N min ago" can differ between server render and hydration, XS.** (A08-S2, pre-existing) `components/features/leads/escalation-status.tsx:55` computes it from `new Date()` in a client component, so a minute boundary gives a text mismatch. **VERIFY:** `grep -n "escalationStatus(job, new Date())" components/features/leads/escalation-status.tsx` — a hit means open.
+- **NOTE — the repealed-tax guard scans `.tsx` files only.** `tests/unit/ui-names-no-repealed-tax.test.ts` misses a `.ts` label map such as `config-labels.ts`; `tests/unit/business-wording.test.ts` holds every Cyprus-config label naming stamp duty to stating its repeal instead. Widen the guard if another `.ts` label map appears.
+- **NOTE — nothing prints the uploaded logo yet.** `branding.test.ts` pins that `logo.png` appears only in `lib/actions/settings.ts` and `lib/services/branding.ts`; the first document or report that prints it updates `BRANDING_USE.logo` too.
+
+**Hosted read-only probes the streams designed and did not run, S (operator's reads).** None blocks the landing except 0152's conflict query (above). Already answered by the review's own read (2026-10-18): the hierarchy probes (no unit or phase under a wrong or cross-organisation parent) and the deal stamps (no closed deal without its stamp).
+- F07: dwelling values on land rows; land values on non-land rows; how many approximate-location listings' rings drop 10 points.
+- F08: `select count(*) filter (where location is not null and location_approx) from public.properties where kind <> 'unit'` (centroids drawn as exact until now); listings with no point at all (`location`, the area's and the district's centroids all null), which the map leaves out.
+- A05: live holds against status (`reservations` held or confirmed, with their property's status); payment plans by scope, for the decision above.
+- A04: counts of saved searches, website leads with a buyer brief and no saved search, share links by binding, and proposals holding listings that are not inventory or have limited visibility.
+- A08-P3 / A01: properties with no owner or developer, or no agent; leads by status, assignment and answered; the entity-type mix of the last 50 events.
+- A07: the Vercel production environment variable NAMES, never values (`RESEND_API_KEY`, `ENQUIRY_ALERT_TO`, `ENQUIRY_ALERT_FROM`, `SITE_REVALIDATE_URL` / `_KEY`, `IP_HASH_SALT`, `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `CRON_SECRET`, `ENQUIRY_FORWARD_KEY`), against what the overview should then say.
+- **Pre-existing on main at 390 px (found 2026-10-19, mobile e2e; CI runs desktop only), S each.** (1) The deal close dialog's Mark won / Mark lost buttons are covered by the dialog's own footer row ("<div class="flex justify-end gap-2"> intercepts pointer events") in `deal-close-outcomes.spec.ts` and `deal-close.spec.ts`; (2) an enquiry stored with an ambiguous header shows no Link contact button (`enquiry-contact-suggestions.spec.ts:321`). Both fail the same way on an `origin/main` build. **VERIFY:** `npx playwright test --project=setup --project=mobile tests/e2e/deal-close.spec.ts` against a local build.
+- **Other list headers have never been measured at 390 px with data on the page, S.** (integration `9bf257f`) `/properties` and `/leads` overflowed only once their actions were all present; contacts, deals, tasks, keys, viewings and share-links have the same header shape. Sweep each with `assertNoHorizontalOverflow` and a `toBeInViewport()` on its primary action, with a row on the list. **VERIFY:** `grep -n "toBeInViewport" tests/e2e/phone-layout.spec.ts` — only properties and leads means open.
+- **NOTE — the properties table's photo column appears from 1680 px.** (A03) At a 1280 px desktop no list thumbnail is drawn or fetched, so the CSP test's Storage coverage goes through `?view=cards` (`csp.spec.ts`). If the desk wants thumbnails on ordinary laptops, that is a column-priority decision, not a CSP one.

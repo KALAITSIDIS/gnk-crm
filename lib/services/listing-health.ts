@@ -1,3 +1,10 @@
+import type {
+  Worklist,
+  WorklistMissingEssentials,
+  WorklistOnMarket,
+  WorklistProperty,
+} from "./quality-worklist";
+
 /**
  * How long a listing has been on the market, and when that alone is a
  * reason to look at it (audit 2026-09-15, LST-03).
@@ -25,4 +32,63 @@ export function daysOnMarket(publishedAt: string, now: Date): number {
 
 export function isPriceReviewDue(days: number): boolean {
   return days >= PRICE_REVIEW_DAYS;
+}
+
+/**
+ * The admin dashboard's Listing health, as separate statements (F03).
+ *
+ * It used to read `published_below_threshold()` — the STORED score against a
+ * hard-coded 70 — and print, in green, "all N public listings clear the
+ * publish threshold". True, and not what it sounded like: the threshold is
+ * compensatory, so a public listing with no photograph at all cleared it on
+ * paperwork, and the build and shared-photo warnings never reached the line.
+ *
+ * Now it is the worklist's own fresh computation (one answer for both
+ * screens), stated as four things that are not one another:
+ *   1. website essentials — public listings missing a cover, a title, a price;
+ *   2. completeness — public listings scoring below the publish threshold;
+ *   3. the market — the longest-standing listing and any due a price review;
+ *   4. data warnings across the live inventory — build contradictions (by
+ *      source) and shared photographs.
+ * HEALTHY (green) only when 1 and 2 are clean and no price review is due.
+ * Data warnings are reported beside the verdict and never decide it: a build
+ * contradiction may be a rebuild being recorded (CRM-05), and a shared
+ * exterior is normal for a development (0088).
+ */
+export interface ListingHealthVerdict {
+  healthy: boolean;
+  /** public and available: on the website */
+  publicCount: number;
+  essentials: WorklistMissingEssentials[];
+  belowThreshold: WorklistProperty[];
+  longest: WorklistOnMarket | null;
+  /** listings at PRICE_REVIEW_DAYS or more */
+  priceReviewDue: number;
+  dataWarnings: {
+    /** listings carrying a build contradiction, inherited ones included */
+    buildConflicts: number;
+    /** the rows those contradictions are fixed on */
+    buildConflictSources: number;
+    /** listings carrying a photograph another listing also carries */
+    sharedPhotos: number;
+  };
+}
+
+export function listingHealthVerdict(worklist: Worklist): ListingHealthVerdict {
+  const priceReviewDue = worklist.onMarket.filter((m) => m.priceReviewDue).length;
+  const essentials = worklist.publicMissingEssentials;
+  const belowThreshold = worklist.belowThreshold;
+  return {
+    healthy: essentials.length === 0 && belowThreshold.length === 0 && priceReviewDue === 0,
+    publicCount: worklist.publicCount,
+    essentials,
+    belowThreshold,
+    longest: worklist.onMarket[0] ?? null,
+    priceReviewDue,
+    dataWarnings: {
+      buildConflicts: worklist.buildConflicts.length,
+      buildConflictSources: worklist.buildConflictGroups.length,
+      sharedPhotos: worklist.sharedPhotos.length,
+    },
+  };
 }

@@ -120,6 +120,7 @@ describe("a role deals_update never admits cannot pick a card up", () => {
       displayValue: 450000,
       health_score: 80,
       healthFactors: null,
+      healthNote: null,
       agentInitials: "AA",
       status: "open" as const,
       daysInStage: 3,

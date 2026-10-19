@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isGoogleMapsShortLink,
   locationChanged,
+  mapsSearchUrl,
   parseLocationPoint,
   parseMapsCoords,
   toLocationEWKT,
@@ -168,5 +169,38 @@ describe("locationChanged", () => {
 
   it("ignores float noise below ~11cm", () => {
     expect(locationChanged(point, { lat: 34.77540000001, lng: 32.42450000001 })).toBe(false);
+  });
+});
+
+// F08: each row of the map page's list links to its point in Google Maps — the
+// way to a location when this browser cannot draw the map at all.
+describe("mapsSearchUrl", () => {
+  it("is the keyless Maps URLs search form, lat before lng, comma encoded", () => {
+    expect(mapsSearchUrl({ lat: 34.772, lng: 32.4297 })).toBe(
+      "https://www.google.com/maps/search/?api=1&query=34.772000%2C32.429700",
+    );
+  });
+
+  it("rounds to six decimals (~11 cm), the rounding locationChanged compares at", () => {
+    expect(mapsSearchUrl({ lat: 34.77541234567, lng: -32.42449999999 })).toBe(
+      "https://www.google.com/maps/search/?api=1&query=34.775412%2C-32.424500",
+    );
+  });
+
+  it("round-trips through parseMapsCoords — a copied link pastes back as the same point", () => {
+    for (const p of [
+      { lat: 34.772, lng: 32.4297 },
+      { lat: -33.865143, lng: 151.2099 },
+      { lat: 0, lng: 0 },
+      { lat: 89.999999, lng: -179.999999 },
+    ]) {
+      expect(parseMapsCoords(mapsSearchUrl(p))).toEqual(p);
+    }
+  });
+
+  it("carries nothing but the point — no filter, no name, no reference", () => {
+    const url = new URL(mapsSearchUrl({ lat: 34.772, lng: 32.4297 }));
+    expect(url.origin + url.pathname).toBe("https://www.google.com/maps/search/");
+    expect([...url.searchParams.keys()]).toEqual(["api", "query"]);
   });
 });

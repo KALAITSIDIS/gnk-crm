@@ -46,8 +46,10 @@ export async function generateMetadata() {
     // Deliberately says less than it could. Metadata is produced WITHOUT
     // resolving the token, so it cannot name the kind even if it wanted to —
     // and "Property proposal" became a half-wrong title the day 0041 added a
-    // second kind. A neutral one is both accurate and quieter.
-    title: "Property information",
+    // second kind. A neutral one is both accurate and quieter. ABSOLUTE: the
+    // root layout's "· GN REOS" names the desk's internal tool, which is not
+    // a buyer's business (A08 added the template for the staff screens).
+    title: { absolute: "Property information" },
     robots: { index: false, follow: false },
   };
 }

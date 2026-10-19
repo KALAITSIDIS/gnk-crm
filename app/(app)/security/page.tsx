@@ -2,6 +2,10 @@ import { ShieldAlert } from "lucide-react";
 import { ChangePasswordForm } from "@/components/features/settings/change-password-form";
 import { SecurityPanel } from "@/components/features/settings/security-panel";
 import { getMfaStatus } from "@/lib/actions/mfa";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Security · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "Security" };
 
 export const dynamic = "force-dynamic";
 

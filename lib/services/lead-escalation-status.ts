@@ -6,10 +6,11 @@
  * else told it was still waiting?") and the escalation has two recoveries
  * where the desk alert has one.
  *
- * Pure: the row in; a tone, a label, a second line and the recovery the
- * DATABASE would admit for this row out. `request_lead_escalation_recovery`
- * decides for real and refuses the other action, so what is offered here is
- * a prediction of that decision, never the decision itself:
+ * Pure: the row in; a tone, a sentence, its technical details and the
+ * recovery the DATABASE would admit for this row out.
+ * `request_lead_escalation_recovery` decides for real and refuses the other
+ * action, so what is offered here is a prediction of that decision, never
+ * the decision itself:
  *
  *   retry   — the same provider key, which cannot send a second copy: a
  *             terminal failure, a lapsed lease, or a cancellation the POLICY
@@ -20,9 +21,23 @@
  *             accepted with its answer lost;
  *   null    — nothing to do, or nothing an admin may do.
  *
- * `accepted` is rendered as accepted by the provider, never delivered.
+ * TWO AUDIENCES, TWO FIELDS (A08, review 2026-10-18). Every role reads the
+ * chip, so `label` is business words: what happened and, where it helps,
+ * what to do. The outbox's vocabulary — state, result code, attempt counter,
+ * the worker's lease, the provider key — goes in `detail`, rendered behind a
+ * "Technical details" disclosure. Nothing keys off these words: the chip
+ * acts on `recovery`, the database on the row.
+ *
+ * `accepted` is rendered as sent — accepted for sending — never delivered.
  */
-import type { DeskAlertJob, DeskAlertTone } from "@/lib/services/enquiry-alert-status";
+import {
+  LEAD_CANCELLATION_WORDS,
+  earlierResult,
+  outboxTechnicalDetail,
+  ownWord,
+  type DeskAlertJob,
+  type DeskAlertTone,
+} from "@/lib/services/enquiry-alert-status";
 import { KEY_SAFE_WINDOW_MS } from "@/lib/services/enquiry-alert-jobs";
 
 export interface EscalationJob extends DeskAlertJob {
@@ -36,28 +51,21 @@ export type EscalationRecovery = "retry" | "resend" | null;
 
 export interface EscalationStatus {
   tone: DeskAlertTone;
+  /** What happened and, where it helps, what to do — business words only. */
   label: string;
-  /** the second line — when, why, and what an admin may do — or null */
+  /** The technical details (state, result code, attempts, lease, key), or null. */
   detail: string | null;
   recovery: EscalationRecovery;
 }
 
 /** Cancellations the policy caused: recoverable once the policy is fixed. */
-const POLICY_CANCELLATIONS: Record<string, string> = {
-  escalation_disabled: "lead escalation was switched off at send time — switch it on under Settings → Lead escalation, then Retry",
-  no_recipient: "nobody eligible to receive it — check the recipients under Settings → Lead escalation, then Retry",
+const POLICY_CANCELLATIONS: Readonly<Record<string, string>> = {
+  escalation_disabled: "lead escalation was switched off when it was due. Switch it on under Settings → Lead escalation",
+  no_recipient: "nobody eligible was set to receive it. Check the recipients under Settings → Lead escalation",
 };
 
-/** Cancellations because the enquiry no longer needed one: final. */
-const FINAL_CANCELLATIONS: Record<string, string> = {
-  lead_answered: "the enquiry was answered first",
-  lead_closed: "the lead was closed",
-  lead_redacted: "the enquiry was redacted",
-  lead_unreadable: "the enquiry could not be read",
-  lead_missing: "the lead no longer exists",
-};
-
-const RESEND_TAIL = "review, then resend under a new key";
+/** Why a person must decide: the recipients may already have the first e-mail. */
+const MAY_HAVE_ARRIVED = "Escalation needs a decision — an earlier try may already have reached colleagues";
 
 const minutesUntil = (iso: string, now: Date): number =>
   Math.max(0, Math.round((new Date(iso).getTime() - now.getTime()) / 60_000));
@@ -90,19 +98,22 @@ function keySafe(job: EscalationJob, now: Date): boolean {
   return first + KEY_SAFE_WINDOW_MS > now.getTime();
 }
 
+const KEY_EXPIRED = "the provider key's safe window has passed, so a new send needs a new key";
+const SAME_KEY = "Retry presents the same provider key, which cannot send a second copy";
+
 export function escalationStatus(job: EscalationJob | null | undefined, now: Date): EscalationStatus | null {
   if (!job) return null;
-  const last = job.last_result ? ` (${job.last_result})` : "";
   const attempted = lastAttempt(job, now);
-  const paren = attempted ? ` (${attempted})` : "";
+  // the row's facts (with when it was last tried), then the explanation
+  const tech = (...more: Array<string | null>) => outboxTechnicalDetail(job, attempted, ...more);
 
   switch (job.state) {
     case "accepted": {
       const when = ago(job.accepted_at, now);
       return {
         tone: "success",
-        label: "Escalation accepted by the provider",
-        detail: `${when ?? "accepted"} — accepted for sending, not a delivery receipt`,
+        label: when ? `Escalation sent ${when}` : "Escalation sent",
+        detail: outboxTechnicalDetail(job, "accepted by the provider for sending — not a delivery receipt"),
         recovery: null,
       };
     }
@@ -112,96 +123,89 @@ export function escalationStatus(job: EscalationJob | null | undefined, now: Dat
       if (job.last_category === "conflict") {
         return {
           tone: "danger",
-          label: "Escalation needs a decision",
-          detail: `the provider holds an earlier version of this e-mail under its key and may already have sent it${paren} — ${RESEND_TAIL}`,
+          label: "Escalation needs a decision — the first e-mail may already have reached colleagues",
+          detail: tech("the provider holds an earlier version of this e-mail under its key"),
           recovery: "resend",
         };
       }
       if (job.last_result === "key_window_expired") {
         return {
           tone: "danger",
-          label: "Escalation needs a decision",
-          detail: `an earlier attempt may have reached the recipients and the provider key has expired${paren} — ${RESEND_TAIL}`,
+          label: "Escalation needs a decision — the first e-mail may already have reached colleagues",
+          detail: tech("the provider key expired before the outcome of an earlier attempt was known"),
           recovery: "resend",
         };
       }
       if (job.last_result === "retry_beyond_window") {
         return {
           tone: "danger",
-          label: "Escalation needs a decision",
-          detail: `the provider asked to wait longer than the key stays safe${paren} — ${RESEND_TAIL}`,
+          label: "Escalation needs a decision — the mail service asked to wait too long",
+          detail: tech("the provider's Retry-After outlasts the key's safe window, so the worker stopped"),
           recovery: "resend",
         };
       }
-      const label = job.attempts > 1 ? `Escalation FAILED after ${job.attempts} attempts${last}` : `Escalation FAILED${last}`;
-      const lead = attempted ? `${attempted} — ` : "";
       if (!keySafe(job, now)) {
-        return {
-          tone: "danger",
-          label,
-          detail: `${lead}the provider key has expired, so an earlier attempt may have reached the recipients; ${RESEND_TAIL}`,
-          recovery: "resend",
-        };
+        return { tone: "danger", label: MAY_HAVE_ARRIVED, detail: tech(KEY_EXPIRED), recovery: "resend" };
       }
       return {
         tone: "danger",
-        label,
-        detail: `${lead}Retry sends it again under the same key, which cannot send a second copy`,
+        label:
+          job.last_category === "permanent"
+            ? "Escalation not sent — the mail service refused it"
+            : job.attempts > 1
+              ? `Escalation not sent after ${job.attempts} tries`
+              : "Escalation not sent",
+        detail: tech(SAME_KEY),
         recovery: "retry",
       };
     }
 
     case "cancelled": {
-      const why = job.last_result ?? "";
-      if (why in POLICY_CANCELLATIONS) {
+      const policy = ownWord(POLICY_CANCELLATIONS, job.last_result);
+      if (policy) {
         if (!keySafe(job, now)) {
           return {
             tone: "neutral",
-            label: "Escalation cancelled",
-            detail: `${POLICY_CANCELLATIONS[why]!.replace(/, then Retry$/, "")} — the provider key has since expired; ${RESEND_TAIL}`,
+            label: `Escalation cancelled — ${policy}, then review and send a new copy.`,
+            detail: tech(KEY_EXPIRED),
             recovery: "resend",
           };
         }
-        return { tone: "neutral", label: "Escalation cancelled", detail: POLICY_CANCELLATIONS[why]!, recovery: "retry" };
+        return { tone: "neutral", label: `Escalation cancelled — ${policy}, then Retry.`, detail: tech(SAME_KEY), recovery: "retry" };
       }
+      const final = ownWord(LEAD_CANCELLATION_WORDS, job.last_result);
       return {
         tone: "neutral",
-        label: "Escalation cancelled",
-        detail: FINAL_CANCELLATIONS[why] ?? (why || null),
+        label: final ? `Escalation cancelled — ${final}` : "Escalation cancelled",
+        detail: job.last_result || job.last_category ? tech() : null,
         recovery: null,
       };
     }
 
     case "sending": {
       const live = job.claimed_until !== null && new Date(job.claimed_until).getTime() > now.getTime();
-      if (live) return { tone: "neutral", label: "Escalation sending…", detail: null, recovery: null };
+      if (live) return { tone: "neutral", label: "Escalation sending…", detail: earlierResult(job), recovery: null };
       const lapsed = ago(job.claimed_until, now);
-      const label = `Escalation stuck (${job.attempts} of ${job.max_attempts})`;
+      const lease = `the worker's lease lapsed${lapsed ? ` ${lapsed}` : ""}`;
       if (!keySafe(job, now)) {
-        return {
-          tone: "warning",
-          label,
-          detail: `the worker's lease lapsed${lapsed ? ` ${lapsed}` : ""} and the provider key has expired — an earlier attempt may have reached the recipients; ${RESEND_TAIL}`,
-          recovery: "resend",
-        };
+        return { tone: "warning", label: MAY_HAVE_ARRIVED, detail: tech(lease, KEY_EXPIRED), recovery: "resend" };
       }
       return {
         tone: "warning",
-        label,
-        detail: `the worker's lease lapsed${lapsed ? ` ${lapsed}` : ""} — the sweep will pick it up; Retry sends it now under the same key`,
+        label: "Escalation stuck — it will be retried",
+        detail: tech(lease, `the next sweep picks it up; ${SAME_KEY}`),
         recovery: "retry",
       };
     }
 
     default: {
       // pending: the worker owns it
-      if (job.attempts === 0) return { tone: "neutral", label: "Escalation queued", detail: null, recovery: null };
+      if (job.attempts === 0) return { tone: "neutral", label: "Escalation queued", detail: earlierResult(job), recovery: null };
       const wait = minutesUntil(job.next_attempt_at, now);
-      const next = wait === 0 ? "due now" : `next in ${wait} min`;
       return {
         tone: "warning",
-        label: `Escalation retrying (${job.attempts} of ${job.max_attempts}${job.last_result ? `, last ${job.last_result}` : ""})`,
-        detail: attempted ? `${next} · ${attempted}` : next,
+        label: `Escalation delayed — trying again ${wait === 0 ? "now" : `in ${wait} min`}`,
+        detail: tech(),
         recovery: null,
       };
     }

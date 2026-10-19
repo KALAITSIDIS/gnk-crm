@@ -5,21 +5,28 @@ import Link from "next/link";
  * `icon`/`count` are the agent-dashboard extras — admin cards omit them.
  * `count` is the EXACT match count from the query (`count: "exact"`), not the
  * length of the limit-capped list, so "23" can badge a list showing 10.
+ *
+ * `level`: a card's title is an h2 on its own, an h3 when the card sits under
+ * a section heading (the admin dashboard's "My day" and "Team", A01), so the
+ * outline a screen reader walks stays nested.
  */
 export function Card({
   title,
   icon,
   count,
+  level = 2,
   children,
 }: {
   title: string;
   icon?: React.ReactNode;
   count?: number;
+  level?: 2 | 3;
   children: React.ReactNode;
 }) {
+  const Heading = level === 3 ? "h3" : "h2";
   return (
     <section className="rounded-[10px] border border-border bg-surface p-4 sm:p-5">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-1">
+      <Heading className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-1">
         {icon}
         {title}
         {count !== undefined ? (
@@ -27,7 +34,7 @@ export function Card({
             {count}
           </span>
         ) : null}
-      </h2>
+      </Heading>
       {children}
     </section>
   );

@@ -31,6 +31,7 @@ import {
   type MoveDealResult,
 } from "@/lib/services/pipeline-move";
 import { isGuid } from "@/lib/validators/ids";
+import { conversationOutcomeField } from "@/lib/validators/conversation";
 
 // the board's answer type lives beside the board's decisions (T-kanban-drop-settle)
 export type { MoveDealResult };
@@ -875,6 +876,9 @@ export async function markDealLost(
   return closeDeal("lost", { p_deal_id: dealId, p_lost_reason: lostReason });
 }
 
+/** The deal dialog's fields plus "What happened" (0155, A06-b, lib/validators/conversation.ts). */
+const logDealContactOutcomeSchema = logDealContactSchema.extend({ outcome: conversationOutcomeField });
+
 /**
  * "I spoke to the buyer" — the only signal that silences a deal_no_contact
  * nudge (migration 0025).
@@ -888,6 +892,10 @@ export async function markDealLost(
  * `last_activity_at` is bumped too: talking to the buyer is genuine activity
  * and the health score decays from it (doc 02 §C5). The two columns answer
  * different questions and both are true after this.
+ *
+ * What happened (0155, A06-b) — spoke, message sent with no reply yet, or the
+ * client replied — is the agent's own claim and moves no clock differently:
+ * any logged contact is contact.
  */
 export async function logDealContact(
   _prev: DealSectionState,
@@ -896,11 +904,11 @@ export async function logDealContact(
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  const parsed = logDealContactSchema.safeParse(Object.fromEntries(formData));
+  const parsed = logDealContactOutcomeSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
   }
-  const { deal_id: dealId, channel, note } = parsed.data;
+  const { deal_id: dealId, channel, note, outcome } = parsed.data;
 
   const { data: deal } = await supabase
     .from("deals")
@@ -927,12 +935,14 @@ export async function logDealContact(
   if (note) {
     // The words go to interaction_notes and the chain gets their digest
     // (0094, audit SEC-03): erasure can blank a row, never an event. The
-    // database writes the conversation_logged event from the note's insert.
+    // database writes the conversation_logged event from the note's insert,
+    // with the outcome when one was chosen (0155).
     const { error: noteErr } = await supabase.rpc("log_conversation", {
       p_entity_type: "deal",
       p_entity_id: dealId,
       p_channel: channel,
       p_note: note,
+      p_outcome: outcome,
     });
     if (noteErr) return { error: noteErr.message, savedAt: null };
   } else {
@@ -942,7 +952,8 @@ export async function logDealContact(
       entityType: "deal",
       entityId: dealId,
       eventType: "conversation_logged",
-      payload: { channel },
+      // the trigger's shape (0155): the outcome only when one was chosen
+      payload: { channel, ...(outcome ? { outcome } : {}) },
     });
   }
 

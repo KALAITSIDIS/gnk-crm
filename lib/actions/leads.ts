@@ -24,8 +24,9 @@ import {
   SELLER_META_KEYS,
   budgetBandRange,
   cleanEnquiryMeta,
-  requirementFromMeta,
 } from "@/lib/services/enquiry-meta";
+import { seedNote, seedRequirementFromBrief } from "@/lib/services/requirement-from-brief";
+import { mayEditBuyerRequirements } from "@/lib/validators/buyer-requirements";
 import {
   leadContactMode,
   parseWebsiteEnquiry,
@@ -34,6 +35,7 @@ import {
 import { normalizePhone } from "@/lib/services/phone";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { COMM_CHANNELS, LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import { conversationOutcomeField } from "@/lib/validators/conversation";
 import { createLeadSchema } from "@/lib/validators/leads";
 import { isGuid } from "@/lib/validators/ids";
 import { contactLinkError } from "@/lib/services/contact-reread";
@@ -588,20 +590,24 @@ export async function redactLead(leadId: string): Promise<{ error: string | null
  * is one sentence, because its words would describe the schema. Once the
  * row is pending again the worker is kicked for THAT lead after the answer,
  * exactly as the enquiry route does — the sweep would get to it anyway.
+ *
+ * THE REFUSAL IS RETURNED, NOT THROWN: Next replaces a thrown error's message
+ * in production ("An error occurred in the Server Components render…"), so a
+ * thrown refusal never reached the person it was written for.
  */
-export async function retryEnquiryAlert(leadId: string): Promise<void> {
-  if (!isGuid(leadId)) throw new Error("Lead not found");
+export async function retryEnquiryAlert(leadId: string): Promise<{ error: string | null }> {
+  if (!isGuid(leadId)) return { error: "Lead not found" };
   const supabase = await createClient();
   await getCurrentProfile(supabase);
 
   const { data, error } = await supabase.rpc("request_enquiry_alert_retry", { p_lead_id: leadId });
   if (error) {
     // P0001 is `raise exception` — the function's own words, meant to be read.
-    if (error.code === "P0001") throw new Error(error.message);
-    throw new Error("Could not queue the alert — try again, and tell an admin if it keeps failing.");
+    if (error.code === "P0001") return { error: error.message };
+    return { error: "Could not queue the alert — try again, and tell an admin if it keeps failing." };
   }
   const job = data?.[0];
-  if (!job) throw new Error("No desk alert is recorded for this lead.");
+  if (!job) return { error: "No desk alert is recorded for this lead." };
 
   after(async () => {
     await runEnquiryAlertWorker(createAdminClient(), {
@@ -617,6 +623,7 @@ export async function retryEnquiryAlert(leadId: string): Promise<void> {
     });
   });
   revalidatePath("/leads");
+  return { error: null };
 }
 
 const recoverEscalationSchema = z.object({
@@ -638,10 +645,15 @@ export type RecoverEscalationInput = z.input<typeof recoverEscalationSchema>;
  * same provider key while it is safe, `resend` under a new key only when it
  * is not. The browser supplies nothing but the job id and the action; every
  * fact is derived server-side. The worker is then kicked for THAT job.
+ *
+ * Its refusals are RETURNED, as retryEnquiryAlert's are: a thrown message is
+ * replaced by Next in production, and the admin would read a generic failure
+ * instead of the database's sentence ("use Retry, which cannot send a second
+ * copy").
  */
-export async function recoverLeadEscalation(input: RecoverEscalationInput): Promise<void> {
+export async function recoverLeadEscalation(input: RecoverEscalationInput): Promise<{ error: string | null }> {
   const parsed = recoverEscalationSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid input.");
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const { jobId, action } = parsed.data;
 
   const supabase = await createClient();
@@ -653,11 +665,11 @@ export async function recoverLeadEscalation(input: RecoverEscalationInput): Prom
   });
   if (error) {
     // P0001 is `raise exception` — the function's own words, meant to be read.
-    if (error.code === "P0001") throw new Error(error.message);
-    throw new Error("Could not queue the escalation — try again, and tell an admin if it keeps failing.");
+    if (error.code === "P0001") return { error: error.message };
+    return { error: "Could not queue the escalation — try again, and tell an admin if it keeps failing." };
   }
   const job = data?.[0];
-  if (!job) throw new Error("No escalation is recorded for this job.");
+  if (!job) return { error: "No escalation is recorded for this job." };
 
   after(async () => {
     await runEnquiryAlertWorker(createAdminClient(), {
@@ -670,6 +682,7 @@ export async function recoverLeadEscalation(input: RecoverEscalationInput): Prom
     });
   });
   revalidatePath("/leads");
+  return { error: null };
 }
 
 export async function claimLead(leadId: string): Promise<void> {
@@ -810,6 +823,11 @@ const conversationSchema = z.object({
   lead_id: z.guid(),
   channel: z.enum(COMM_CHANNELS),
   note: z.string().trim().min(1, "Note is required").max(5000),
+  // What happened (0155, A06-b). Whatever it says, this is a logged
+  // conversation: it stamps first_response_at below exactly as before — a
+  // message the agent says they sent IS the agency's response. Only a
+  // chat-link click never stamps it (logChatLinkOpened).
+  outcome: conversationOutcomeField,
 });
 
 export async function logConversation(
@@ -838,12 +856,14 @@ export async function logConversation(
 
   // The words go to interaction_notes and the chain gets their digest (0094,
   // audit SEC-03): erasure can blank a row, never an event. The database
-  // writes the conversation_logged event from the note's insert trigger.
+  // writes the conversation_logged event from the note's insert trigger, with
+  // the outcome when one was chosen (0155; omitted, the call is 0094's).
   const { error: noteErr } = await supabase.rpc("log_conversation", {
     p_entity_type: "lead",
     p_entity_id: lead.id,
     p_channel: parsed.data.channel,
     p_note: parsed.data.note,
+    p_outcome: parsed.data.outcome,
   });
   if (noteErr) return { error: noteErr.message, savedAt: null };
 
@@ -1085,46 +1105,116 @@ export async function createContactFromEnquiry(leadId: string): Promise<LeadActi
     payload: { contact_id: contact.id, via: "website_enquiry" },
   });
 
-  let note: string | null = null;
-  if (isBuyer) {
-    const { data: areaRows } = await supabase.from("areas").select("id, district_id, name");
-    const areas = (areaRows ?? []).map((a) => ({
-      id: a.id,
-      district_id: a.district_id,
-      name_en: ((a.name as { en?: string } | null)?.en ?? "").trim(),
-    }));
-    const seed = requirementFromMeta(meta, areas);
-    if (seed) {
-      const { data: requirement, error: reqErr } = await supabase
-        .from("buyer_requirements")
-        .insert({
-          org_id: profile.orgId,
-          contact_id: contact.id,
-          ...seed,
-          property_types: seed.property_types as Database["public"]["Enums"]["property_type"][],
-          created_by: profile.id,
-        })
-        .select("id")
-        .single();
-      if (reqErr) {
-        note = `The saved search could not be created (${reqErr.message}) — add it on the contact.`;
-      } else {
-        await logEvent(supabase, {
-          orgId: profile.orgId,
-          actorId: profile.id,
-          entityType: "contact",
-          entityId: contact.id,
-          eventType: "requirement_added",
-          payload: { requirement_id: requirement.id, label: seed.label, via: "website_enquiry" },
-        });
-      }
-    }
-  }
+  // the brief becomes the contact's saved search — the one body
+  // saveSearchFromEnquiry runs too (lib/services/requirement-from-brief.ts)
+  const note = isBuyer
+    ? seedNote(await seedRequirementFromBrief(supabase, profile, contact.id, meta, lead.id))
+    : null;
 
   revalidatePath("/leads");
   revalidatePath("/contacts");
   revalidatePath(`/contacts/${contact.id}`);
   return { error: null, savedAt: Date.now(), duplicate: null, note };
+}
+
+/**
+ * "Save brief as search" (A04): a website buyer's brief, on a lead whose
+ * contact ALREADY existed — linked by "Review and link" or Link contact — saved
+ * as that contact's search. `createContactFromEnquiry` seeds one only while
+ * creating a new contact, so a known person's brief was readable as chips in
+ * the inbox and reached the matcher only if someone retyped it.
+ *
+ * Writes one `buyer_requirements` row and its `requirement_added` line on the
+ * contact, through the SAME helper the create path uses. The lead is not
+ * changed, so this is not a lead write: any role that may record a saved
+ * search (mayEditBuyerRequirements — the 0043 policies are org-wide) may run
+ * it, on an open or a closed lead. Refused, each in a sentence and with
+ * nothing written: a lead that is not a website enquiry (no structured brief),
+ * one with no contact, a redacted enquiry, a brief with no buyer answers, an
+ * archived or erased contact, and a contact that already has an active search —
+ * a second one would show every match twice (BACKLOG, duplicated saved
+ * searches); that one is edited on the contact instead.
+ *
+ * Nothing is sent and nothing is matched here: the search simply starts
+ * appearing on matching listings, as one typed on the contact would.
+ */
+export async function saveSearchFromEnquiry(leadId: string): Promise<LeadActionState> {
+  if (!isGuid(leadId)) return { error: "Lead not found", savedAt: null };
+  const supabase = await createClient();
+  let profile: CurrentProfile;
+  try {
+    profile = await getCurrentProfile(supabase);
+  } catch {
+    return { error: "Your session could not be verified — sign in again. Nothing was changed.", savedAt: null };
+  }
+
+  const { data: lead, error: leadErr } = await supabase
+    .from("leads")
+    .select("id, source, contact_id, message, criteria")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (leadErr) return { error: "Could not load the lead — try again.", savedAt: null };
+  if (!lead) return { error: "Lead not found", savedAt: null };
+  if (lead.source !== "website") {
+    return { error: "Only a website enquiry carries a brief to save — add the search on the contact.", savedAt: null };
+  }
+  if (!lead.contact_id) {
+    return { error: "Link or create the contact first — a saved search belongs to a contact.", savedAt: null };
+  }
+  if (lead.message === LEAD_MESSAGE_REDACTED) {
+    return { error: "This enquiry was redacted — its brief cannot be saved.", savedAt: null };
+  }
+  const meta = cleanEnquiryMeta(lead.criteria);
+  if (!BUYER_META_KEYS.some((k) => meta[k])) {
+    return { error: "This enquiry holds no buyer's brief to save — add the search on the contact.", savedAt: null };
+  }
+
+  const { data: contact, error: contactErr } = await supabase
+    .from("contacts")
+    .select("id, is_archived, erased_at")
+    .eq("id", lead.contact_id)
+    .maybeSingle();
+  if (contactErr) return { error: "Could not load the contact — try again.", savedAt: null };
+  if (!contact) return { error: "Contact not found.", savedAt: null };
+  if (contact.erased_at) return { error: "This contact was erased — no new records may be added.", savedAt: null };
+  if (contact.is_archived) {
+    return { error: "This contact is archived — restore it before adding a saved search.", savedAt: null };
+  }
+  if (!mayEditBuyerRequirements(profile.role, { isArchived: false, isErased: false })) {
+    return { error: "Your role cannot record saved searches.", savedAt: null };
+  }
+
+  const existing = await supabase
+    .from("buyer_requirements")
+    .select("id")
+    .eq("contact_id", contact.id)
+    .eq("is_active", true)
+    .limit(1);
+  // a failed or hollow answer is not "none": saving on it could duplicate one
+  if (existing.error || !Array.isArray(existing.data)) {
+    return { error: "Could not check the contact's saved searches — try again.", savedAt: null };
+  }
+  if (existing.data.length > 0) {
+    return { error: "This contact already has a saved search — edit it on the contact.", savedAt: null };
+  }
+
+  const seeded = await seedRequirementFromBrief(supabase, profile, contact.id, meta, lead.id);
+  revalidatePath("/leads");
+  revalidatePath(`/contacts/${contact.id}`);
+  switch (seeded.kind) {
+    case "saved":
+      return { error: null, savedAt: Date.now(), note: seeded.notice };
+    case "no_brief":
+      return { error: "This enquiry holds no buyer's brief to save — add the search on the contact.", savedAt: null };
+    case "refused":
+      return { error: "The saved search could not be created — nothing was saved. Try again.", savedAt: null };
+    case "unconfirmed":
+      return {
+        error:
+          "The saved search could not be confirmed — it may have been saved. Open the contact's Preferences tab before trying again.",
+        savedAt: null,
+      };
+  }
 }
 
 const convertSchema = z.object({

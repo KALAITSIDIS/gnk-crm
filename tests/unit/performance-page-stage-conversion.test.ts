@@ -24,6 +24,10 @@ vi.mock("@/lib/supabase/server", () => ({
       .client.from,
   }),
 }));
+// the page reads the caller's role for its scope lines (F06)
+vi.mock("@/lib/services/auth", () => ({
+  getCurrentProfile: async () => ({ id: "user-1", orgId: "org-1", role: "admin", fullName: "Admin" }),
+}));
 // keys and values, so the markup says exactly which message was chosen
 vi.mock("next-intl/server", () => ({
   getTranslations: async () => (key: string, vars?: Record<string, unknown>) =>
@@ -140,5 +144,64 @@ describe("the stage-conversion section", () => {
     expect(stage).not.toContain("[empty]");
     expect(stage).not.toContain("<table");
     expect(stage).not.toContain(EXPORT_LINK);
+  });
+});
+
+describe("the stage-conversion section against 0154's answer (F06)", () => {
+  const SALE_Q = { deal_type: "sale", stage_id: "s-q", stage: "Qualified", sort_order: 2, entered: 1, advanced: 1, regressed: 0, departed_unknown: 0, advance_rate: 1 };
+  const SALE_V = { deal_type: "sale", stage_id: "s-v", stage: "Viewing", sort_order: 3, entered: 1, advanced: 0, regressed: 1, departed_unknown: 0, advance_rate: 0 };
+  const LEGACY = { deal_type: "sale", stage_id: null, stage: "OLD-B", sort_order: null, entered: 1, advanced: 0, regressed: 0, departed_unknown: 1, advance_rate: 0 };
+  const RENT_Q = { deal_type: "rental", stage_id: "r-q", stage: "Qualified", sort_order: 2, entered: 1, advanced: 0, regressed: 0, departed_unknown: 0, advance_rate: 0 };
+  const UNKNOWN = { deal_type: null, stage_id: null, stage: "GONE", sort_order: null, entered: 1, advanced: 0, regressed: 0, departed_unknown: 0, advance_rate: 0 };
+  const directional = (over: Record<string, unknown> = {}) =>
+    conv({
+      stage_key: "id",
+      stages: [SALE_Q, SALE_V, LEGACY, RENT_Q, UNKNOWN],
+      outcomes: { won: 2, lost: 1 },
+      outcomes_by_type: [
+        { deal_type: "sale", won: 1, lost: 0 },
+        { deal_type: null, won: 1, lost: 1 },
+      ],
+      ...over,
+    });
+
+  it("one table per pipeline, in the answer's order, with the direction split — two 'Qualified' rows never merge", async () => {
+    const { stage } = await render({ data: directional(), error: null });
+    const sale = stage.indexOf('data-testid="stage-pipeline-sale"');
+    const rental = stage.indexOf('data-testid="stage-pipeline-rental"');
+    const unknown = stage.indexOf('data-testid="stage-pipeline-unknown"');
+    expect(sale).toBeGreaterThan(0);
+    expect(rental).toBeGreaterThan(sale);
+    expect(unknown).toBeGreaterThan(rental);
+    expect(stage).toContain("[stages.pipelines.sale]");
+    expect(stage).toContain("[stages.pipelines.rental]");
+    expect(stage).toContain("[stages.pipelines.unknown]");
+    expect(stage.match(/>Qualified</g), "sale's and rental's Qualified are two rows").toHaveLength(2);
+    for (const k of ["[stages.advanced]", "[stages.regressed]", "[stages.departedUnknown]", "[stages.forwardRate]"]) {
+      expect(stage).toContain(k);
+    }
+    expect(stage, "the 0130 any-direction label is not used").not.toContain("stages.advancedAnyDirection");
+    expect(stage, "a row without a current stage is labelled as the name recorded at the time").toContain(
+      "[stages.recordedName stage=OLD-B]",
+    );
+    expect(stage).toContain("[stages.idKeyed]");
+    expect(stage).not.toContain("stages.nameKeyed");
+    expect(stage).toContain(EXPORT_LINK);
+  });
+
+  it("closes are counted per pipeline, and the reason they are not attributed stays", async () => {
+    const { stage } = await render({ data: directional(), error: null });
+    expect(stage).toContain("[stages.outcomes won=2 lost=1]");
+    expect(stage).toContain("[stages.pipelines.sale]: [stages.outcomesPipeline won=1 lost=0]");
+    expect(stage).toContain("[stages.pipelines.unknown]: [stages.outcomesPipeline won=1 lost=1]");
+  });
+
+  it("a database still at 0130 (stage_key 'name') is labelled as what it counts: either direction, merged by name", async () => {
+    const { stage } = await render({ data: conv(), error: null });
+    expect(stage).toContain("[stages.advancedAnyDirection]");
+    expect(stage).toContain("[stages.advanceRate]");
+    expect(stage).toContain("[stages.nameKeyed]");
+    expect(stage).not.toContain("[stages.advanced]");
+    expect(stage).not.toContain("stage-pipeline-");
   });
 });

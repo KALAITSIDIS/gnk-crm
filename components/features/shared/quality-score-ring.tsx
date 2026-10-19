@@ -1,12 +1,24 @@
 "use client";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { QualityScoreItem, QualityScoreWarning } from "@/lib/services/quality-score";
+import {
+  PUBLISH_THRESHOLD,
+  type QualityScoreItem,
+  type QualityScoreWarning,
+} from "@/lib/services/quality-score";
 import { cn } from "@/lib/utils";
 
 /**
  * QualityScoreRing (doc 06): 40px ring; <50 danger, 50–69 warning, ≥70
- * success; tooltip lists the missing items from the score service.
+ * (PUBLISH_THRESHOLD) success; tooltip lists the missing items from the score
+ * service.
+ *
+ * F03: the trigger is a BUTTON. It was a div, which takes no focus, so the
+ * tooltip — at the time the only account of what was missing — opened for a
+ * mouse and for nobody else. A button is reached by Tab, opens the tooltip on
+ * focus, and its aria-label says the score and how much is missing. The same
+ * facts are also in visible text on the property page (ListingReadiness), so
+ * a touch screen, which never hovers, is not left without them.
  */
 export function QualityScoreRing({
   score,
@@ -23,17 +35,28 @@ export function QualityScoreRing({
   const radius = (size - 6) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - score / 100);
-  const tone = score >= 70 ? "text-success" : score >= 50 ? "text-warning" : "text-danger";
+  const tone =
+    score >= PUBLISH_THRESHOLD ? "text-success" : score >= 50 ? "text-warning" : "text-danger";
+  const label = [
+    `Quality score ${score} of 100`,
+    missing.length === 0
+      ? "all criteria met"
+      : `${missing.length} ${missing.length === 1 ? "criterion" : "criteria"} missing`,
+    ...(warnings.length > 0
+      ? [`${warnings.length} data ${warnings.length === 1 ? "warning" : "warnings"}`]
+      : []),
+  ].join(", ");
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div
-          className="relative inline-flex shrink-0 items-center justify-center"
+        <button
+          type="button"
+          className="relative inline-flex shrink-0 cursor-default items-center justify-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           style={{ width: size, height: size }}
-          aria-label={`Quality score ${score} of 100`}
+          aria-label={label}
         >
-          <svg width={size} height={size} className="-rotate-90">
+          <svg width={size} height={size} className="-rotate-90" aria-hidden>
             <circle
               cx={size / 2}
               cy={size / 2}
@@ -54,10 +77,10 @@ export function QualityScoreRing({
               className={cn("stroke-current transition-all", tone)}
             />
           </svg>
-          <span className={cn("absolute text-[11px] font-semibold tabular-nums", tone)}>
+          <span className={cn("absolute text-[11px] font-semibold tabular-nums", tone)} aria-hidden>
             {score}
           </span>
-        </div>
+        </button>
       </TooltipTrigger>
       <TooltipContent side="right" className="max-w-64">
         {warnings.length > 0 ? (

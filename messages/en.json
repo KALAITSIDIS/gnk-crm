@@ -7,6 +7,7 @@
     "dashboard": "Dashboard",
     "leads": "Leads",
     "pipeline": "Pipeline",
+    "deals": "Deals",
     "properties": "Properties",
     "contacts": "Contacts",
     "viewings": "Viewings",
@@ -41,16 +42,38 @@
       "cards": {
         "pipelineByStage": "Pipeline by stage (open deals)",
         "leadsBySource": "Leads by source (30d)",
-        "listingsByStatus": "Listings by status",
         "mandatesExpiring": "Mandates expiring ≤30 days",
-        "latestEvents": "Latest events"
+        "salesActivity": "Latest sales activity",
+        "adminChanges": "Settings & admin changes"
+      },
+      "inventory": {
+        "title": "Inventory by status",
+        "saleable": "Saleable available",
+        "status": {
+          "draft": "Draft",
+          "available": "Available",
+          "reserved": "Reserved",
+          "under_offer": "Under offer",
+          "sold": "Sold",
+          "rented": "Rented"
+        },
+        "kinds": {
+          "standalone": "{count, plural, one {# listing} other {# listings}}",
+          "project": "{count, plural, one {# development} other {# developments}}",
+          "phase": "{count, plural, one {# phase} other {# phases}}",
+          "unit": "{count, plural, one {# unit} other {# units}}"
+        },
+        "totalLabel": "{status}: {count, plural, one {# live record} other {# live records}} — open the list",
+        "footnote": "Live records: not archived and not withdrawn, the properties list's default. A development counts once as its project record (and once per phase); its units count separately. Saleable means listings and units: a development itself cannot be reserved.",
+        "retired": "Withdrawn & archived",
+        "empty": "No live listings."
       },
       "empty": {
         "noOpenDeals": "Nothing yet (no open deals).",
         "noLeads": "No leads in the last 30 days.",
-        "noListings": "No listings yet.",
         "noMandates": "None in the next 30 days.",
-        "noEvents": "No activity yet."
+        "noEvents": "No activity yet.",
+        "noAdminChanges": "No settings, user or export changes yet."
       },
       "actions": {
         "openPipeline": "Open pipeline",
@@ -65,33 +88,92 @@
         "viewings": "Viewings",
         "contacts": "Contacts",
         "calculators": "Calculators"
-      },
+      }
+    },
+    "myDay": {
+      "title": "My day",
       "cards": {
         "todaysViewings": "Today's viewings",
         "tasksDue": "Tasks due today & overdue",
-        "myNewLeads": "My new leads",
-        "hotIdle": "Hot buyers idle 3+ days"
+        "myLeads": "My open leads",
+        "hotIdle": "Hot buyers — no logged contact in 3+ days"
       },
       "empty": {
         "noViewings": "Nothing scheduled today.",
         "noTasksDue": "Nothing due today.",
         "noLeads": "No open leads assigned to you.",
-        "hotAllTouched": "All hot buyers touched recently."
+        "hotAllContacted": "Every hot buyer has a logged contact in the last 3 days."
       },
       "actions": {
         "scheduleViewing": "Schedule a viewing",
         "allTasks": "All tasks",
         "leadInbox": "Open lead inbox"
       },
-      "idleDays": "{days}d idle",
-      "noActivity": "no activity",
-      "unnamed": "Unnamed"
+      "unanswered": "{count, plural, one {# unanswered} other {# unanswered}}",
+      "lastLoggedDays": "last logged {days}d ago",
+      "neverLogged": "no logged contact yet",
+      "hotUnavailable": "Could not check when these buyers were last contacted — reload the page to try again.",
+      "unnamed": "Unnamed",
+      "kind": {
+        "mandate_renewal": "Mandate renewal",
+        "deal_no_contact": "No contact",
+        "viewing_feedback": "Feedback due",
+        "price_drop_match": "Price-drop match",
+        "new_listing_match": "New-listing match",
+        "reservation_expiring": "Hold expiring",
+        "bulk_price_drop_match": "Reprice match",
+        "installment_due": "Instalment due",
+        "key_recall": "Key return",
+        "viewing_no_show": "No-show",
+        "listing_status_check": "Listing status",
+        "retention_expired": "Retention review",
+        "reservation_still_live": "Hold to settle",
+        "lead_unanswered": "Lead unanswered",
+        "other": "Reminder"
+      }
+    },
+    "team": {
+      "title": "Team",
+      "cards": {
+        "unassignedLeads": "Unassigned open leads",
+        "overdue": "Overdue across the team"
+      },
+      "empty": {
+        "noUnassigned": "Every open lead has an agent.",
+        "noOverdue": "Nothing overdue on anyone else's list."
+      },
+      "unassigned": "Unassigned",
+      "unknownUser": "Unknown user"
+    },
+    "listingHealth": {
+      "title": "Listing health",
+      "ready": "ready to market",
+      "attention": "needs attention",
+      "unreadable": "Listing health: unreadable ({message}).",
+      "nothingPublic": "Website essentials: nothing is public on the website.",
+      "essentialsClean": "Website essentials: {count, plural, one {the # public listing has} other {all # public listings have}} a cover photo, an English title and a price.",
+      "essentialsMissing": "Website essentials: {count, plural, one {# public listing lacks} other {# public listings lack}} what the site needs — {list}.",
+      "completenessClean": "Completeness: {count, plural, one {the # public listing scores} other {all # public listings score}} {threshold} or more.",
+      "completenessBelow": "Completeness: {count, plural, one {# public listing scores} other {# public listings score}} below {threshold} — {list}.",
+      "longest": "Longest on the market: {ref}, {days, plural, one {# day} other {# days}}.",
+      "priceReview": "{count, plural, one {# listing} other {# listings}} at {days}+ days, due a price review.",
+      "dataWarnings": "Data warnings across live listings: {list}.",
+      "noDataWarnings": "Data warnings across live listings: none.",
+      "buildConflicts": "{count, plural, one {# build contradiction} other {# build contradictions}} ({total} to correct)",
+      "sharedPhotos": "{count, plural, one {# listing shares a photograph} other {# listings share a photograph}}",
+      "essential": {
+        "cover": "cover photo",
+        "title_en": "English title",
+        "price": "price",
+        "unitsPriced": "priced units"
+      },
+      "worklist": "Worklist"
     }
   },
   "reports": {
     "title": "Reports",
     "subtitle": "Generated documents are stored and evented.",
-    "chainBadge": "Nightly event hash-chain check: {status} · last verified {when}",
+    "chainBadge": "Nightly activity-log integrity check: {status} · last verified {when}",
     "chainOk": "OK",
     "chainFailing": "FAILING",
     "chainStale": "STALE — no result in 48h, check the nightly job",
@@ -174,7 +256,7 @@
     },
     "performanceCard": {
       "title": "Performance reports",
-      "description": "Agent performance, source ROI, time to close, stage conversion and price reductions — with an audit anchor and CSV export."
+      "description": "Agent performance, lead sources, time to close, stage conversion and price reductions — with an audit anchor and CSV export."
     },
     "performance": {
       "title": "Performance reports",
@@ -184,14 +266,19 @@
       "apply": "Apply",
       "export": "Export CSV",
       "empty": "Nothing in this window.",
+      "loadError": "This report could not be loaded. Reload the page to try again.",
       "backToReports": "Back to reports",
       "windowNote": "Window: {from} to {to}, Cyprus local time.",
+      "scope": {
+        "admin": "Every figure on this page covers the whole agency.",
+        "listingManager": "Every figure covers the whole agency except stage conversion, which counts only the stage changes and closes you recorded yourself.",
+        "agent": "Leads, viewings and price reductions cover the whole agency. Deals — won, lost, their value and time to close — count only the deals assigned to you or created by you, and stage conversion only the stage changes and closes you recorded yourself."
+      },
       "citation": {
         "heading": "Audit anchor",
         "body": "Event chain verified through #{id} ({hash}…) on {when}.",
         "none": "No verification checkpoint yet — the nightly check has not run.",
-        "scopeOwn": "These figures cover your own records only.",
-        "scopeOrg": "These figures cover the whole agency.",
+        "loadError": "The audit anchor could not be loaded, so these figures are not tied to a verified point in the activity log. Reload the page to try again.",
         "limits": "The anchor proves the event log was intact; it does not prove the underlying records are unchanged."
       },
       "agents": {
@@ -202,18 +289,28 @@
         "avgResponse": "Avg response (min)",
         "viewings": "Viewings",
         "won": "Won",
-        "wonValue": "Won value",
-        "lost": "Lost"
+        "wonValue": "Won deal value",
+        "lost": "Lost",
+        "definition": "Leads count in the window they were received, completed viewings in the window they were scheduled, and won or lost deals in the window they closed. Won deal value is the confirmed final value (else the expected value) in euros — the transaction value, not commission."
       },
       "sources": {
-        "heading": "Source ROI",
+        "heading": "Lead sources",
         "source": "Source",
         "leads": "Leads",
+        "spam": "Spam",
         "converted": "Converted",
         "won": "Won",
-        "wonValue": "Won value",
+        "wonValue": "Won deal value",
         "convertRate": "Convert rate",
-        "winRate": "Win rate"
+        "convertRateExclSpam": "Convert rate (excl. spam)",
+        "winRate": "Win rate",
+        "visibleToYou": "{count} with a deal you can see",
+        "definition": "Enquiries received in this window, by the source recorded on each enquiry. Every enquiry counts, repeat enquiries from one person included. Converted and Won follow those enquiries to their deal, whenever the deal was won (its status today). Won deal value is the transaction value, not commission: the confirmed final value (else the expected value) of those won deals in euros, sale prices and rents added together. No marketing spend is recorded, so this is not a return on investment.",
+        "definitionSpam": "Enquiries marked spam count under Leads and Spam and are left out of the convert rate.",
+        "scopeOrg": "These figures cover the whole agency.",
+        "scopeAgent": "Leads, spam and conversions cover the whole agency — the enquiry inbox is shared. Won and won deal value count only the deals you can see: those assigned to you or created by you.",
+        "winRateOwn": "Win rate is Won divided by the converted enquiries whose deal you can see.",
+        "winRateMixed": "Win rate divides the won deals you can see by the whole agency's conversions, so it is not your own win rate."
       },
       "ttc": {
         "heading": "Time to close",
@@ -228,11 +325,25 @@
         "heading": "Stage conversion",
         "stage": "Stage",
         "entered": "Entered",
-        "advanced": "Advanced",
+        "advanced": "Moved forward",
+        "advancedAnyDirection": "Moved on (either direction)",
+        "regressed": "Moved back",
+        "departedUnknown": "Direction unknown",
         "advanceRate": "Advance rate",
-        "derivedFrom": "Computed from the hash-chained event log.",
-        "nameKeyed": "Stages are matched by name, so renaming one splits its history.",
+        "forwardRate": "Forward rate",
+        "derivedFrom": "Computed from the tamper-evident activity log.",
+        "nameKeyed": "Stages of every pipeline are combined by their current name; changes recorded before stage ids were kept use the name at the time.",
+        "idKeyed": "Each pipeline is shown separately, its stages in pipeline order. A renamed stage keeps its history; changes recorded before stage ids were kept, and stages since deleted, appear under the name recorded at the time.",
+        "recordedName": "{stage} (name recorded at the time)",
         "outcomes": "Closed in this window: {won} won, {lost} lost — counted separately, because those events do not record the stage they left.",
+        "outcomesPipeline": "{won} won, {lost} lost",
+        "pipelines": {
+          "sale": "Sale",
+          "rental": "Rental",
+          "antiparoxi": "Antiparoxi",
+          "advisory": "Advisory",
+          "unknown": "Pipeline not known"
+        },
         "loadError": "The stage conversion report could not be loaded. Reload the page to try again.",
         "excluded": "{count, plural, one {# stage change in this window has an unreadable stage reference and is left out of these figures.} other {# stage changes in this window have an unreadable stage reference and are left out of these figures.}}",
         "allExcluded": "{count, plural, one {The only stage change in this window has an unreadable stage reference, so there is nothing to report. This window is not empty — the record was left out.} other {All # stage changes in this window have an unreadable stage reference, so there is nothing to report. This window is not empty — the records were left out.}}"
@@ -279,8 +390,12 @@
     "called": "Marked called",
     "conversationLogged": "Conversation logged",
     "conversationLoggedChannel": "Conversation logged ({channel})",
-    "chatOpened": "Chat opened",
-    "chatOpenedChannel": "Chat opened ({channel})",
+    "conversationMessageSent": "Message sent",
+    "conversationMessageSentChannel": "Message sent ({channel})",
+    "conversationClientReplied": "Client replied",
+    "conversationClientRepliedChannel": "Client replied ({channel})",
+    "chatOpened": "Chat opened (link click only)",
+    "chatOpenedChannel": "{channel} chat opened (link click only)",
     "converted": "Converted to deal",
     "viewingConfirmationGenerated": "Viewing confirmation generated",
     "slipSigned": "Viewing slip signed",
@@ -426,6 +541,41 @@
     "installmentDueChanged": "Instalment due date {from} → {to}",
     "installmentDueChangedLabel": "Instalment due date {from} → {to} — {label}",
     "installmentDueSet": "Instalment due date set to {to}",
-    "installmentDueCleared": "Instalment due date cleared"
+    "installmentDueCleared": "Instalment due date cleared",
+    "contactedFirstResponse": "Marked contacted — first response",
+    "calledFirstCall": "Marked called — first call",
+    "channelWhatsapp": "WhatsApp",
+    "channelTelegram": "Telegram",
+    "channelPhone": "Phone",
+    "channelEmail": "Email",
+    "channelSms": "SMS",
+    "channelInPerson": "In person",
+    "channelOther": "Other channel",
+    "viewingScheduled": "Viewing scheduled",
+    "viewingCompleted": "Viewing completed",
+    "viewingCancelled": "Viewing cancelled",
+    "viewingNoShow": "Viewing — buyer did not show",
+    "system": "System",
+    "sourceContact": "Contact",
+    "sourceLead": "Lead",
+    "sourceDeal": "Deal",
+    "sourceViewing": "Viewing",
+    "sourceProperty": "Property",
+    "sourceKey": "Key",
+    "feedFilter": "Filter activity",
+    "feedAll": "All",
+    "feedCommunication": "Communication",
+    "feedViewings": "Viewings",
+    "feedDeals": "Deals",
+    "feedChanges": "Changes",
+    "feedSystem": "System",
+    "feedEmptyCommunication": "No calls, logged conversations or chat-link clicks yet.",
+    "feedEmptyViewings": "No viewing activity yet.",
+    "feedEmptyDeals": "No deal activity yet.",
+    "feedEmptyChanges": "No record changes yet.",
+    "feedEmptySystem": "No system events yet.",
+    "feedIncomplete": "Part of this history could not be loaded — refresh the page to try again.",
+    "feedTruncated": "Showing the latest {count} events.",
+    "feedLinkClickHint": "A chat-link click opens the app — it is not a logged contact."
   }
 }

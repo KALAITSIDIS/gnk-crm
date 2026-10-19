@@ -41,6 +41,15 @@ import {
  * service role writing the row a pre-0131 session wrote (same organisation,
  * same actor, the default occurred_at), and asserts that the session's own
  * POST is refused. The reader's behaviour pinned here is unchanged.
+ *
+ * SINCE 0154 the rows carry more keys (a stage row its pipeline, stage id,
+ * sort_order and the direction split; a transition its pipeline, ids and
+ * direction), so the figures below are compared through `legacy` / `tr` —
+ * the keys this file was written against — and the new keys are asserted
+ * where they say something. One figure changes on purpose (the mixed window):
+ * a name-only legacy move into "Qualified" is no longer merged by NAME with
+ * the id-resolved stage; it is a row of its own under the recorded name
+ * (supabase/tests/report-definitions.test.ts pins why).
  */
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const ORG = randomUUID();
@@ -67,13 +76,33 @@ type Conv = {
   moves_total: number;
   moves_with_ids: number;
   moves_malformed: number;
-  stages: Array<{ stage: string; entered: number; advanced: number; advance_rate: number | null }>;
-  transitions: Array<{ from: string | null; to: string | null; deals: number }>;
+  stages: Array<{
+    stage: string;
+    entered: number;
+    advanced: number;
+    advance_rate: number | null;
+    deal_type?: string | null;
+    stage_id?: string | null;
+    sort_order?: number | null;
+    regressed?: number;
+    departed_unknown?: number;
+  }>;
+  transitions: Array<{ from: string | null; to: string | null; deals: number; deal_type?: string | null; direction?: string | null }>;
   outcomes: { won: number; lost: number };
   note: string;
 };
 
 type Win = { p_from: string; p_to: string };
+
+/** A stage row through the keys this file was written against (0130). */
+const legacy = (s: Conv["stages"][number]) => ({
+  stage: s.stage,
+  entered: s.entered,
+  advanced: s.advanced,
+  advance_rate: s.advance_rate === null ? null : Number(s.advance_rate),
+});
+/** A transition through the keys this file was written against (0130). */
+const tr = (t: Conv["transitions"][number]) => ({ from: t.from, to: t.to, deals: t.deals });
 
 async function report(client: SupabaseClient, win: Win) {
   const { data, error } = await client.rpc("report_stage_conversion", win);
@@ -216,15 +245,22 @@ describe("a malformed stage_changed already in the chain (pre-0131 or imported):
     expect(conv.moves_total).toBe(3);
     expect(conv.moves_with_ids).toBe(3);
     expect(conv.moves_malformed).toBe(0);
-    expect(conv.stages).toEqual([
+    expect(conv.stages.map(legacy)).toEqual([
       { stage: "Qualified", entered: 2, advanced: 1, advance_rate: 0.5 },
       { stage: "Viewing", entered: 1, advanced: 0, advance_rate: 0 },
       // New was only departed, never entered in-window: no row (0076's cohort)
     ]);
-    expect(conv.transitions).toEqual([
+    // 0154: the rows name their pipeline and stage; both moves were forward
+    expect(conv.stage_key).toBe("id");
+    expect(conv.stages.map((s) => [s.deal_type, s.stage_id, s.regressed, s.departed_unknown])).toEqual([
+      ["sale", sQualified.id, 0, 0],
+      ["sale", sViewing.id, 0, 0],
+    ]);
+    expect(conv.transitions.map(tr)).toEqual([
       { from: "New", to: "Qualified", deals: 2 },
       { from: "Qualified", to: "Viewing", deals: 1 },
     ]);
+    expect(conv.transitions.map((t) => t.direction)).toEqual(["forward", "forward"]);
     for (const [who, c] of [
       ["admin", admin],
       ["agent", agent],
@@ -345,7 +381,7 @@ describe("every shape a stage-id field can take", () => {
 
   it("valid ids resolve to the stages' CURRENT names", async () => {
     const c = await one(valid());
-    expect(c.transitions).toEqual([{ from: "New", to: "Qualified", deals: 1 }]);
+    expect(c.transitions.map(tr)).toEqual([{ from: "New", to: "Qualified", deals: 1 }]);
     expect([c.moves_total, c.moves_with_ids, c.moves_malformed]).toEqual([1, 1, 0]);
   });
 
@@ -358,7 +394,7 @@ describe("every shape a stage-id field can take", () => {
       const p = valid();
       p[field] = spell(p[field]);
       const c = await one(p);
-      expect(c.transitions, field).toEqual([{ from: "New", to: "Qualified", deals: 1 }]);
+      expect(c.transitions.map(tr), field).toEqual([{ from: "New", to: "Qualified", deals: 1 }]);
       expect([c.moves_total, c.moves_with_ids, c.moves_malformed], field).toEqual([1, 1, 0]);
     }
   });
@@ -375,21 +411,27 @@ describe("every shape a stage-id field can take", () => {
       const c = await one(p);
       const expected =
         field === "from_stage_id" ? { from: "REC-from", to: "Qualified", deals: 1 } : { from: "New", to: "REC-to", deals: 1 };
-      expect(c.transitions, field).toEqual([expected]);
+      expect(c.transitions.map(tr), field).toEqual([expected]);
       expect([c.moves_total, c.moves_with_ids, c.moves_malformed], field).toEqual([1, 1, 0]);
     }
   });
 
   it("a pre-0067 name-only event reports under its recorded names, not id-backed", async () => {
     const c = await one({ ...names });
-    expect(c.transitions).toEqual([{ from: "REC-from", to: "REC-to", deals: 1 }]);
+    expect(c.transitions.map(tr)).toEqual([{ from: "REC-from", to: "REC-to", deals: 1 }]);
     expect([c.moves_total, c.moves_with_ids, c.moves_malformed]).toEqual([1, 0, 0]);
+    // 0154: no stage id, so the row is the recorded name in the deal's
+    // pipeline (the admin can read the deal), and its direction is unknown
+    expect(c.stages).toEqual([
+      expect.objectContaining({ deal_type: "sale", stage_id: null, stage: "REC-to", sort_order: null, entered: 1 }),
+    ]);
+    expect(c.transitions.map((t) => [t.deal_type, t.direction])).toEqual([["sale", null]]);
   });
 
   it("an id naming no readable stage (deleted, or another organisation's) falls back to the recorded name", async () => {
     for (const id of [randomUUID(), otherStage.id]) {
       const c = await one({ ...valid(), to_stage_id: id });
-      expect(c.transitions).toEqual([{ from: "New", to: "REC-to", deals: 1 }]);
+      expect(c.transitions.map(tr)).toEqual([{ from: "New", to: "REC-to", deals: 1 }]);
       expect([c.moves_total, c.moves_with_ids, c.moves_malformed]).toEqual([1, 1, 0]);
     }
   });
@@ -465,9 +507,19 @@ describe("a mixed window keeps its counters consistent", () => {
 
     const c = await ok(admin.client, { p_from: at(0), p_to: at(10) }, "mixed");
     expect([c.moves_total, c.moves_with_ids, c.moves_malformed]).toEqual([3, 2, 2]);
-    expect(c.stages).toEqual([
-      { stage: "Qualified", entered: 2, advanced: 1, advance_rate: 0.5 },
+    // 0154: d2's name-only move into "Qualified" is a row of its own under the
+    // recorded name — it is not merged by NAME into the stage d1 entered by id
+    // (a recorded name can belong to a stage renamed or deleted since). Before
+    // 0154 this read one "Qualified" row, entered 2.
+    expect(c.stages.map(legacy)).toEqual([
+      { stage: "Qualified", entered: 1, advanced: 1, advance_rate: 1 },
       { stage: "Viewing", entered: 1, advanced: 0, advance_rate: 0 },
+      { stage: "Qualified", entered: 1, advanced: 0, advance_rate: 0 },
+    ]);
+    expect(c.stages.map((s) => [s.deal_type, s.stage_id])).toEqual([
+      ["sale", sQualified.id],
+      ["sale", sViewing.id],
+      ["sale", null],
     ]);
     expect(c.stages.every((s) => s.advanced <= s.entered)).toBe(true);
     expect(c.transitions.reduce((n, t) => n + t.deals, 0)).toBeLessThanOrEqual(c.moves_total);

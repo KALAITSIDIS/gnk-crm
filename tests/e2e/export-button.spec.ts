@@ -44,7 +44,9 @@ test.describe("Export CSV button", () => {
     expect(download.suggestedFilename()).toMatch(/^my-tasks-\d{4}-\d{2}-\d{2}\.csv$/);
     const text = readFileSync((await download.path())!, "utf8");
     expect(text.charCodeAt(0)).toBe(0xfeff);
-    expect(text.slice(1)).toMatch(/^Title,Status,Due,Done at,Property,Auto,Created\r\n/);
+    // Assignee is last (A02, lib/services/task-export.ts) so the columns a
+    // spreadsheet already reads keep their places
+    expect(text.slice(1)).toMatch(/^Title,Status,Due,Done at,Property,Auto,Created,Assignee\r\n/);
   });
 
   test("more records than one export holds: nothing is saved, the reason is on screen", async ({ page }) => {

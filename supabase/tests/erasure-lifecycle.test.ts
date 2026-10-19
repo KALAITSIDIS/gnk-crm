@@ -481,7 +481,8 @@ describe("a session cannot reverse a completed erasure (PATCH)", () => {
       ...REFUSED,
       message: FROZEN("is_archived, temperature"),
     });
-    // dashboard predicate (components/features/dashboard/agent-dashboard.tsx — hot buyers), reproduced on the agent's session
+    // the hot-buyers card's contact predicate (components/features/dashboard/hot-idle-card.tsx;
+    // its idle rule is readLastLoggedContacts), reproduced on the agent's session
     const hot = await agent.client
       .from("contacts")
       .select("id")
@@ -1190,7 +1191,7 @@ describe("0134 itself: replay over 0132, refusals, rollback, restore pack, trust
       await asSession(agent.id);
       expect((await pg.query("update contacts set erased_at = null where id = $1", [c])).rowCount).toBe(1);
       expect((await pg.query("update contacts set is_archived = false, temperature = 'hot' where id = $1 and erased_at is null", [c])).rowCount).toBe(1);
-      // the agent dashboard's hot-buyer predicate (components/features/dashboard/agent-dashboard.tsx), as the agent
+      // the hot-buyers card's contact predicate (components/features/dashboard/hot-idle-card.tsx), as the agent
       const hot = await pg.query(
         "select id from contacts where assigned_agent_id = $2 and temperature = 'hot' and contact_types @> '{buyer}' and is_archived = false and id = $1",
         [c, agent.id],

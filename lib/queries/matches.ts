@@ -46,6 +46,12 @@ export interface ScoredProperty {
     reference: string;
     title: Record<string, string> | null;
     currency: string | null;
+    /**
+     * Who the listing may be shown to (A04). Not a match rule — an
+     * `off_market` listing is inventory and still matches — but the row says
+     * so, because a proposal puts it in front of the buyer.
+     */
+    visibility: string;
   };
 }
 
@@ -57,8 +63,8 @@ export interface MatchResult<T> {
   considered: number;
 }
 
-const CANDIDATE_COLUMNS =
-  "id, reference, title, status, transaction_type, property_type, district_id, area_id, " +
+export const CANDIDATE_COLUMNS =
+  "id, reference, title, status, visibility, transaction_type, property_type, district_id, area_id, " +
   "currency, asking_price, rent_price_month, bedrooms, bathrooms, covered_area_sqm, " +
   "plot_area_sqm, title_deed_status, vat_status, sea_distance_m, delivery_date, features";
 
@@ -164,6 +170,8 @@ export interface ScoredBuyer {
   label: string | null;
   contactId: string;
   contactName: string;
+  /** the buyer's languages (contacts.languages): a proposal opens in the first one it speaks */
+  contactLanguages: string[];
   agentName: string | null;
 }
 
@@ -179,7 +187,7 @@ export async function findMatchingBuyers(
         "budget_min, budget_max, bedrooms_min, bedrooms_max, bathrooms_min, " +
         "covered_area_min_sqm, plot_area_min_sqm, title_deed_required, vat_preference, " +
         "max_sea_distance_m, delivery_by, features_required, " +
-        "contacts!inner(id, display_name, assigned_agent_id, is_archived)",
+        "contacts!inner(id, display_name, assigned_agent_id, is_archived, languages)",
     )
     .eq("is_active", true)
     .eq("contacts.is_archived", false)
@@ -207,7 +215,12 @@ export async function findMatchingBuyers(
     id: string;
     label: string | null;
     contact_id: string;
-    contacts: { id: string; display_name: string; assigned_agent_id: string | null } | null;
+    contacts: {
+      id: string;
+      display_name: string;
+      assigned_agent_id: string | null;
+      languages: string[] | null;
+    } | null;
   };
 
   const rows = (data ?? []) as unknown as Row[];
@@ -221,6 +234,7 @@ export async function findMatchingBuyers(
       label: r.label,
       contactId: r.contact_id,
       contactName: r.contacts?.display_name ?? "—",
+      contactLanguages: Array.isArray(r.contacts?.languages) ? r.contacts.languages : [],
       agentName: null,
     });
   }

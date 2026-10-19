@@ -1,10 +1,7 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Building2, ListChecks, Map, Plus } from "lucide-react";
-import {
-  PropertiesFilters,
-  type AreaOption,
-  type DistrictOption,
-} from "@/components/features/properties/filters";
+import { PropertiesFilters } from "@/components/features/properties/filters";
 import {
   PropertiesCards,
   PropertiesTable,
@@ -13,14 +10,27 @@ import {
 import type { MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
-import { unwrapRows } from "@/lib/supabase/unwrap";
-import { PROPERTIES_PAGE_SIZE } from "@/lib/validators/properties";
+import { unwrapCount, unwrapRows } from "@/lib/supabase/unwrap";
+import { PROPERTIES_PAGE_SIZE, type PropertyFilters } from "@/lib/validators/properties";
 import {
   applyPropertyListFilters,
+  applyPropertyListOrder,
+  columnSort,
+  countPropertyList,
+  describePropertyFilters,
+  hiddenUnitFilters,
+  hiddenUnitsText,
   mandateEmbed,
   parsePropertyFilters,
+  propertiesViewTitle,
+  propertyCountNoun,
+  type ColumnSort,
+  type PlaceNames,
+  type SortableColumn,
 } from "@/lib/queries/properties-list";
+import { readPropertyPlaces } from "@/lib/queries/property-places";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import { DocumentTitle } from "@/components/features/shared/document-title";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -40,6 +50,30 @@ function deriveMandateState(mandates: MandateEmbed[]): MandateBadgeState {
   return "none";
 }
 
+/**
+ * The tab, the history entry and the bookmark name the view (A03): "Properties
+ * · Paphos · Land · plot 1.500–6.000 m² · density ≥ 90% · sorted by plot ↓".
+ * The URL is the saved view; this is its name. The district and area names
+ * come from the same per-request read the page makes (`readPropertyPlaces`).
+ *
+ * Next sets it on a full load only: a filter change, a sort header and Back
+ * keep the route and change the search params, and the tab kept its first
+ * name. The page renders `DocumentTitle` with these same words for those.
+ */
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const filters = parsePropertyFilters(await searchParams);
+  return { title: listViewTitle(filters, await readPropertyPlaces()) };
+}
+
+/** The view's name — generateMetadata's title and the page's DocumentTitle, one function. */
+function listViewTitle(filters: PropertyFilters, places: PlaceNames): string {
+  return propertiesViewTitle("Properties", filters, places);
+}
+
 export default async function PropertiesPage({
   searchParams,
 }: {
@@ -50,29 +84,14 @@ export default async function PropertiesPage({
 
   const supabase = await createClient();
 
-  const [districtsRes, areasRes] = await Promise.all([
-    supabase.from("districts").select("id, name, sort_order").order("sort_order"),
-    supabase.from("areas").select("id, district_id, name"),
-  ]);
-
-  const districts: DistrictOption[] = unwrapRows(districtsRes, "districts").map((d) => ({
-    id: d.id,
-    name: (d.name as { en?: string })?.en ?? "—",
-  }));
-  const areas: AreaOption[] = unwrapRows(areasRes, "areas").map((a) => ({
-    id: a.id,
-    districtId: a.district_id,
-    name: (a.name as { en?: string })?.en ?? "—",
-  }));
-
   // Shared with the export route and the map so they select exactly the same
   // rows; the mandate filters ride in this one request (T-mandate-filter-anti-join).
   const base = supabase
     .from("properties")
     .select(
       `id, reference, kind, property_type, transaction_type, status, visibility,
-       title, bedrooms, covered_area_sqm, plot_area_sqm, asking_price,
-       rent_price_month, quality_score,
+       title, bedrooms, covered_area_sqm, plot_area_sqm, building_density_pct,
+       asking_price, rent_price_month, quality_score,
        districts(name), areas(name),
        property_media(path_thumb, is_cover, sort_order, kind),
        ${mandateEmbed(filters)}`,
@@ -81,23 +100,34 @@ export default async function PropertiesPage({
 
   const query = applyPropertyListFilters(base, filters);
 
-  const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
-  // `id` breaks created_at ties: without a unique last key each offset page may
-  // order tied rows differently, repeating some and skipping others. Same order
-  // as the CSV export; the table and the cards render these same rows. (A
-  // listing added between two page loads still shifts the pages — each is its
-  // own request.) T-list-page-order
-  const result = await query
-    .order("created_at", { ascending: false })
-    .order("id")
-    .range(from, from + PROPERTIES_PAGE_SIZE - 1);
+  // F04: the default list leaves units out, so it SAYS how many — one exact
+  // HEAD count of the same filters with kind=unit, beside the page read. The
+  // default total plus this count is exactly what "Show all kinds" lists.
+  const unitFilters = hiddenUnitFilters(filters);
 
-  // PGRST103 = page beyond the result set → render the empty-page state
-  if (result.error && result.error.code !== "PGRST103") {
-    throw new Error(`Properties query failed: ${result.error.message}`);
-  }
-  const data = result.data ?? [];
-  const count = result.count ?? 0;
+  const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
+  // The list's sort (A03), then `id`: without a unique last key each offset
+  // page may order tied rows differently, repeating some and skipping others.
+  // The default is exactly the order this page always sent (created_at desc,
+  // id). Same order as the CSV export; the table and the cards render these
+  // same rows. (A listing added between two page loads still shifts the
+  // pages — each is its own request.) T-list-page-order
+  const [places, result, hiddenRes] = await Promise.all([
+    readPropertyPlaces(),
+    applyPropertyListOrder(query, filters).range(from, from + PROPERTIES_PAGE_SIZE - 1),
+    unitFilters ? countPropertyList(supabase, unitFilters) : null,
+  ]);
+
+  // PGRST103 = page beyond the result set → render the empty-page state. That
+  // answer carries no count, so the total is asked for rather than shown as 0;
+  // every other answer must carry its rows and its count (a missing one is a
+  // failure, never an empty list).
+  const beyondEnd = result.error?.code === "PGRST103";
+  const data = beyondEnd ? [] : unwrapRows(result, "properties");
+  const total = beyondEnd
+    ? unwrapCount(await countPropertyList(supabase, filters), "properties (count)")
+    : unwrapCount(result, "properties");
+  const hiddenUnits = hiddenRes ? unwrapCount(hiddenRes, "properties (units not shown)") : 0;
 
   const rows: PropertyRow[] = data.map((p) => {
     const media = (p.property_media ?? []) as {
@@ -126,6 +156,7 @@ export default async function PropertiesPage({
       bedrooms: p.bedrooms,
       covered_area_sqm: p.covered_area_sqm === null ? null : Number(p.covered_area_sqm),
       plot_area_sqm: p.plot_area_sqm === null ? null : Number(p.plot_area_sqm),
+      building_density_pct: p.building_density_pct === null ? null : Number(p.building_density_pct),
       asking_price: p.asking_price === null ? null : Number(p.asking_price),
       rent_price_month: p.rent_price_month === null ? null : Number(p.rent_price_month),
       quality_score: p.quality_score,
@@ -134,7 +165,6 @@ export default async function PropertiesPage({
     };
   });
 
-  const total = count;
   const totalPages = Math.max(1, Math.ceil(total / PROPERTIES_PAGE_SIZE));
   const pageParams = (page: number) => {
     const params = new URLSearchParams();
@@ -149,31 +179,74 @@ export default async function PropertiesPage({
   // Both Export and Map carry the active filters but not pagination — the whole
   // filtered set, RLS-scoped to what this user can see. ONE source of truth for
   // which params travel: a second copy would drift from this one.
-  const filterQuery = (() => {
+  const filterParams = (() => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(sp)) {
       if (k === "page") continue;
       const val = first(v);
       if (val) params.set(k, val);
     }
-    const qs = params.toString();
-    return qs ? `?${qs}` : "";
+    return params;
   })();
+  const filterQuery = filterParams.toString() ? `?${filterParams.toString()}` : "";
 
   const exportHref = `/properties/export${filterQuery}`;
   const mapHref = `/properties/map${filterQuery}`;
+  // the same filters with every kind — the default's rows plus the units it hides
+  const allKindsHref = (() => {
+    const params = new URLSearchParams(filterParams);
+    params.set("kind", "all");
+    return `/properties?${params.toString()}`;
+  })();
+
+  // A03: the sortable headers — plain links to this list with the column's
+  // next sort, every filter kept, page 1
+  const land = filters.type === "land";
+  const sortable: SortableColumn[] = land ? ["reference", "plot", "price", "score"] : ["reference", "price", "score"];
+  const sorts: Partial<Record<SortableColumn, ColumnSort>> = {};
+  for (const column of sortable) sorts[column] = columnSort(column, filterParams.toString(), filters.sort);
+  // under "Rent" the price shown is the price the bracket and the sort read:
+  // the monthly rent, a sale_or_rent row's too (A03 review)
+  const rent = filters.transaction === "rent";
+
+  // what this view holds, in words — the same words as the document title
+  const description = describePropertyFilters(filters, places);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      {/* the tab's name after a client-side filter change, sort or Back */}
+      <DocumentTitle words={listViewTitle(filters, places)} />
+      {/* The heading and the four actions share a row while both fit; on a
+          phone the actions wrap under the heading. Without the wrap the
+          `min-w-0` title column was squeezed to nothing at 390 px — the h1 had
+          no width — and before it the row pushed the page sideways. */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 grow basis-64">
           <h1 className="text-xl font-semibold text-text-1">Properties</h1>
           <p className="text-sm text-text-2">
-            {total} {filters.scope === "archived" ? "archived " : ""}propert
-            {total === 1 ? "y" : "ies"}
+            {total} {filters.scope === "archived" ? "archived " : ""}
+            {propertyCountNoun(filters.kind, total)}
+            {hiddenUnits > 0 ? (
+              <>
+                {" · "}
+                {hiddenUnitsText(hiddenUnits)}
+                {" — "}
+                <Link
+                  href={allKindsHref}
+                  className="font-medium text-brand-700 underline-offset-2 hover:underline"
+                >
+                  Show all kinds
+                </Link>
+              </>
+            ) : null}
           </p>
+          {description ? (
+            <p className="text-[13px] text-text-3" data-testid="properties-view-description">
+              {description}
+            </p>
+          ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Deliberately NOT filter-aware, unlike Map and Export below: the
               worklist answers "what should I go fix across everything", which a
               filtered subset cannot. */}
@@ -200,7 +273,7 @@ export default async function PropertiesPage({
         </div>
       </div>
 
-      <PropertiesFilters districts={districts} areas={areas} />
+      <PropertiesFilters districts={places.districts} areas={places.areas} />
 
       {rows.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
@@ -208,11 +281,17 @@ export default async function PropertiesPage({
           <p className="text-sm text-text-2">
             {total > 0 || filters.page > 1
               ? "Nothing on this page."
-              : filters.scope === "archived"
-                ? "No archived properties — withdrawn listings and archived visibility show up here."
-                : "No properties match — add the first one or clear filters."}
+              : hiddenUnits > 0
+                ? `No listings or developments match — ${hiddenUnits} ${hiddenUnits === 1 ? "unit does" : "units do"}.`
+                : filters.scope === "archived"
+                  ? "No archived properties — withdrawn listings and archived visibility show up here."
+                  : "No properties match — add the first one or clear filters."}
           </p>
-          {filters.scope === "archived" ? null : (
+          {total === 0 && filters.page === 1 && hiddenUnits > 0 ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={allKindsHref}>Show all kinds</Link>
+            </Button>
+          ) : filters.scope === "archived" ? null : (
             <Button asChild variant="outline" size="sm">
               <Link href="/properties/new">
                 <Plus className="size-4" /> Add property
@@ -221,9 +300,9 @@ export default async function PropertiesPage({
           )}
         </div>
       ) : filters.view === "cards" ? (
-        <PropertiesCards rows={rows} />
+        <PropertiesCards rows={rows} rent={rent} />
       ) : filters.view === "table" ? (
-        <PropertiesTable rows={rows} />
+        <PropertiesTable rows={rows} land={land} rent={rent} sorts={sorts} />
       ) : (
         /* auto (audit CRM-06): cards on a phone, the table from the tablet
            breakpoint up. Both are rendered and one is hidden by CSS, because
@@ -236,15 +315,17 @@ export default async function PropertiesPage({
               34767615456 failed on the hidden card). A phone never sees the
               table, so its order costs nothing there. */}
           <div className="hidden md:block">
-            <PropertiesTable rows={rows} />
+            <PropertiesTable rows={rows} land={land} rent={rent} sorts={sorts} />
           </div>
           <div className="md:hidden">
-            <PropertiesCards rows={rows} />
+            <PropertiesCards rows={rows} rent={rent} />
           </div>
         </>
       )}
 
-      {totalPages > 1 ? (
+      {/* past the end there is no "Page 12 of 11" to show; the empty state says
+          so and the header still states the true total */}
+      {totalPages > 1 && !beyondEnd ? (
         <div className="flex items-center justify-between text-sm text-text-2">
           <span>
             Page {filters.page} of {totalPages}

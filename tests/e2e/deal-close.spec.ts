@@ -168,11 +168,13 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
 
     await page.goto(`/deals/${deal!.id}`, { waitUntil: "networkidle" });
 
-    // before the close the header states the ESTIMATE, labelled, and Costs opens at it
+    // before the close the header states the ESTIMATE, labelled, and Costs opens
+    // at it — on the deal's own property, so the calculators frame its VAT
+    // scenario (F01/A09: `&property=` is appended whenever the deal has one)
     const headerValue = page.getByTestId("deal-header-value");
     const costs = page.getByRole("link", { name: "Costs", exact: true });
     await expect(headerValue).toHaveText(/^Expected value\s+€999\.999$/);
-    await expect(costs).toHaveAttribute("href", "/calculators?price=999999");
+    await expect(costs).toHaveAttribute("href", `/calculators?price=999999&property=${prop!.id}`);
 
     await page.getByRole("button", { name: /mark won/i }).click();
     const dialog = page.getByRole("dialog");
@@ -191,7 +193,7 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
     // opens at it — the stale 999,999 estimate stays the stored estimate
     // (T-won-value-surfaces)
     await expect(headerValue).toHaveText(/^Final value\s+€250\.000$/);
-    await expect(costs).toHaveAttribute("href", "/calculators?price=250000");
+    await expect(costs).toHaveAttribute("href", `/calculators?price=250000&property=${prop!.id}`);
 
     // ...and the buyer's commission-evidence preview states the deal's figure
     // WITH its basis — the same line the PDF prints (evidenceDealLine)

@@ -9,6 +9,11 @@
  * keeps its last status — that is what restore needs — so the count has to
  * exclude by visibility, exactly as the list does.
  *
+ * Since F04-C the card is "Inventory by status" and reads
+ * property_inventory_counts() (0153, dashboard-inventory.test.ts); the
+ * property_statuses key this file pins is unread until admin_dashboard_stats
+ * is next replaced, and stays correct meanwhile.
+ *
  * Requires the local Supabase stack. Run: npm run test:rls
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

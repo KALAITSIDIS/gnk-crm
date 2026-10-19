@@ -2,20 +2,31 @@ import { describe, expect, it } from "vitest";
 import { toCsv } from "./csv";
 import {
   agentPerformanceCsv,
+  isCitation,
+  isDirectional,
+  isPriceReductions,
   isReportKey,
+  isTimeToClose,
   num,
   pct,
   priceReductionsCsv,
+  reportObject,
+  reportRows,
   sourceRoiCsv,
+  sourceRowsDefineSpam,
   stageConversionCsv,
   stageConversionView,
+  stagesByPipeline,
   timeToCloseCsv,
   timeToCloseRows,
   withExcluded,
+  withSourceSplits,
+  withStageSplits,
   withWindow,
   type AgentPerformanceRow,
   type RepeatCut,
   type SourceRoiRow,
+  type StageConversion,
   type StageRow,
   type TimeToClose,
 } from "./report-export";
@@ -243,5 +254,94 @@ describe("report-export", () => {
     const rows: StageRow[] = [{ stage: "=HYPERLINK(\"evil\")", entered: 1, advanced: 0, advance_rate: 0 }];
     const csv = toCsv(stageConversionCsv(), rows);
     expect(csv).toContain("'=HYPERLINK");
+  });
+
+  describe("0154 (F06): the lead-source and stage splits", () => {
+    it("lead sources append Spam and the visible conversions after From / To; blank before 0154", () => {
+      const rows: SourceRoiRow[] = [
+        { source: "website", leads: 8, spam: 2, converted: 5, converted_visible: 2, won: 1, won_value: 300000, convert_rate: 5 / 6, win_rate: 0.5 },
+        { source: "referral", leads: 1, converted: 0, won: 0, won_value: 0, convert_rate: 0, win_rate: null },
+      ];
+      const [header, a, b] = toCsv(withSourceSplits(withWindow(sourceRoiCsv(), "f", "t")), rows)
+        .replace(/^﻿/, "")
+        .split("\r\n");
+      expect(header).toBe('Source,Leads,Converted,Won,Won value,Convert rate,Win rate,From,To,Spam,"Converted, deal visible"');
+      expect(a, "the 0065 row pin still reads left to right").toBe("website,8,5,1,300000.00,83.3%,50.0%,f,t,2,2");
+      expect(b).toBe("referral,1,0,0,0.00,0.0%,,f,t,,");
+    });
+
+    it("sourceRowsDefineSpam tells 0154's rows from 0076's", () => {
+      const row = { source: "x", leads: 1, converted: 0, won: 0, won_value: 0, convert_rate: 0, win_rate: null };
+      expect(sourceRowsDefineSpam([{ ...row, spam: 0 }])).toBe(true);
+      expect(sourceRowsDefineSpam([row])).toBe(false);
+      expect(sourceRowsDefineSpam([])).toBe(false);
+    });
+
+    it("the stage split is appended after the exclusion count; an unknown pipeline says 'unknown', a recorded name has no id", () => {
+      const rows: StageRow[] = [
+        { deal_type: "sale", stage_id: "s-1", stage: "Viewing", sort_order: 3, entered: 2, advanced: 1, regressed: 1, departed_unknown: 0, advance_rate: 0.5 },
+        { deal_type: null, stage_id: null, stage: "OLD", sort_order: null, entered: 1, advanced: 0, regressed: 0, departed_unknown: 1, advance_rate: 0 },
+        { stage: "Legacy", entered: 1, advanced: 1, advance_rate: 1 },
+      ];
+      const [header, a, b, c] = toCsv(withStageSplits(withExcluded(withWindow(stageConversionCsv("n"), "f", "t"), 0)), rows)
+        .replace(/^﻿/, "")
+        .split("\r\n");
+      expect(header).toBe(
+        "Stage,Entered,Advanced,Advance rate,Note,From,To,Malformed moves excluded,Deal type,Moved back,Direction unknown,Stage id",
+      );
+      expect(a).toBe("Viewing,2,1,50.0%,n,f,t,0,sale,1,0,s-1");
+      expect(b).toBe("OLD,1,0,0.0%,n,f,t,0,unknown,0,1,");
+      expect(c, "a 0130 row: four blank cells").toBe("Legacy,1,1,100.0%,n,f,t,0,,,,");
+    });
+
+    it("stagesByPipeline keeps the answer's order and puts an unreadable pipeline in its own group", () => {
+      const rows: StageRow[] = [
+        { deal_type: "sale", stage: "A", entered: 1, advanced: 0, advance_rate: 0 },
+        { deal_type: "sale", stage: "B", entered: 1, advanced: 0, advance_rate: 0 },
+        { deal_type: "rental", stage: "A", entered: 1, advanced: 0, advance_rate: 0 },
+        { deal_type: null, stage: "C", entered: 1, advanced: 0, advance_rate: 0 },
+      ];
+      expect(stagesByPipeline(rows).map((g) => [g.dealType, g.stages.map((s) => s.stage)])).toEqual([
+        ["sale", ["A", "B"]],
+        ["rental", ["A"]],
+        [null, ["C"]],
+      ]);
+      // a 0130 body has no deal_type: one group, as it always was
+      expect(stagesByPipeline([{ stage: "A", entered: 1, advanced: 0, advance_rate: 0 }]).map((g) => g.dealType)).toEqual([null]);
+    });
+
+    it("isDirectional reads stage_key: 'id' since 0154, 'name' at 0130", () => {
+      const base = { derived_from: "events", stages: [], transitions: [], outcomes: { won: 0, lost: 0 }, note: "" };
+      expect(isDirectional({ ...base, stage_key: "id" } as StageConversion)).toBe(true);
+      expect(isDirectional({ ...base, stage_key: "name" } as StageConversion)).toBe(false);
+    });
+  });
+
+  describe("the other reports' answers: a failure is never an empty list or zeros", () => {
+    it("reportRows: an error or a non-array is an error; an array is rows (empty included)", () => {
+      expect(reportRows({ data: [], error: null })).toEqual({ status: "ok", rows: [] });
+      expect(reportRows({ data: [{ a: 1 }], error: null })).toEqual({ status: "ok", rows: [{ a: 1 }] });
+      for (const data of [null, undefined, {}, "x", 1]) {
+        expect(reportRows({ data, error: null }).status, JSON.stringify(data)).toBe("error");
+      }
+      expect(reportRows({ data: [], error: { message: "x" } }).status).toBe("error");
+    });
+
+    it("reportObject: only a body its validator accepts", () => {
+      const ttc = { won: { count: 1, avg_days: 1, median_days: 1, p90_days: 1 }, lost: { count: "0", avg_days: null, median_days: null } };
+      expect(reportObject({ data: ttc, error: null }, isTimeToClose).status).toBe("ok");
+      expect(reportObject({ data: { won: {}, lost: {} }, error: null }, isTimeToClose).status).toBe("error");
+      expect(reportObject({ data: ttc, error: { message: "x" } }, isTimeToClose).status).toBe("error");
+      expect(reportObject({ data: [ttc], error: null }, isTimeToClose).status).toBe("error");
+
+      const price = { reductions: 0, properties_affected: 0, avg_cut_fraction: null, median_cut_fraction: null, total_cut_amount: null, repeat_cuts: [] };
+      expect(reportObject({ data: price, error: null }, isPriceReductions).status).toBe("ok");
+      expect(reportObject({ data: { ...price, repeat_cuts: null }, error: null }, isPriceReductions).status).toBe("error");
+      expect(reportObject({ data: { repeat_cuts: [] }, error: null }, isPriceReductions).status).toBe("error");
+
+      const cite = { chain_verified_through: null, chain_verified_hash: null, chain_verified_at: null, scope: "own" };
+      expect(reportObject({ data: cite, error: null }, isCitation).status, "no checkpoint yet is a real answer").toBe("ok");
+      expect(reportObject({ data: null, error: null }, isCitation).status).toBe("error");
+    });
   });
 });

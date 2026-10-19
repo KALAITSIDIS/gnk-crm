@@ -123,7 +123,8 @@ const CASES: Case[] = [
   {
     name: "retryEnquiryAlert",
     bad: (bad) => leads.retryEnquiryAlert(bad),
-    refusal: { thrown: "Lead not found" },
+    // returned since its refusals stopped being thrown (Next redacts them)
+    refusal: { value: { error: "Lead not found" } },
     good: (id) => leads.retryEnquiryAlert(id),
   },
   {
@@ -131,6 +132,12 @@ const CASES: Case[] = [
     bad: (bad) => leads.createContactFromEnquiry(bad),
     refusal: { value: { error: "Lead not found", savedAt: null } },
     good: (id) => leads.createContactFromEnquiry(id),
+  },
+  {
+    name: "saveSearchFromEnquiry",
+    bad: (bad) => leads.saveSearchFromEnquiry(bad),
+    refusal: { value: { error: "Lead not found", savedAt: null } },
+    good: (id) => leads.saveSearchFromEnquiry(id),
   },
   {
     name: "deleteMedia — the property id",

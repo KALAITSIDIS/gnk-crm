@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { Fragment, useActionState, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Pencil, Plus, X } from "lucide-react";
 import { ActionSectionForm } from "@/components/features/shared/action-section-form";
@@ -21,6 +21,14 @@ import {
   saveBuyerRequirement,
   setBuyerRequirementActive,
 } from "@/lib/actions/buyer-requirements";
+import {
+  BUDGET_TOLERANCE_PCT,
+  HARD_REQUIREMENT_FIELDS,
+  SOFT_REQUIREMENT_FIELDS,
+  unstatedCriteria,
+  type HardRequirementField,
+  type SoftRequirementField,
+} from "@/lib/services/matching";
 import { SELECT_NONE } from "@/lib/validators/contacts";
 import { PROPERTY_TYPES, TRANSACTION_TYPES, VAT_STATUSES } from "@/lib/validators/properties";
 import { formatMoney } from "@/lib/utils/format";
@@ -31,6 +39,16 @@ import { formatMoney } from "@/lib/utils/format";
  * Several per buyer, because a real one has several: "2-bed under €300k in Kato
  * Paphos" AND "any plot over 500 m² in Tala". `contacts.preferences` could hold
  * one, unstructured and unindexed, which is why 0043 exists.
+ *
+ * MUST MATCH vs PREFERENCES (A04). The matcher treats some fields as HARD — a
+ * listing that misses one is not shown — and the rest as SOFT — a miss lowers
+ * the score and is named. The form used to lay them all out alike, so nothing
+ * told the desk that ticking "Separate title deed required" hides every
+ * listing with a pending deed while "Bathrooms min" only ranks. The two groups
+ * below are rendered FROM the engine's own lists (HARD_REQUIREMENT_FIELDS /
+ * SOFT_REQUIREMENT_FIELDS in lib/services/matching.ts, pinned field by field
+ * in matching.test.ts), so they cannot say something the matcher does not do.
+ * And each search says what it leaves open ("Not stated: location, bedrooms").
  */
 
 export interface RequirementRow {
@@ -90,7 +108,193 @@ function summarise(r: RequirementRow, districts: NamedOption[], areas: NamedOpti
   return parts.join(" · ");
 }
 
-function RequirementFields({
+/** "Not stated: location, bedrooms" — what the desk still has to ask. Null when all four are stated. */
+function notStated(r: RequirementRow): string | null {
+  const open = unstatedCriteria(r);
+  return open.length ? `Not stated: ${open.join(", ")}` : null;
+}
+
+type FieldContext = {
+  r?: RequirementRow;
+  districts: NamedOption[];
+  areas: NamedOption[];
+  /** a control id unique to this form */
+  id: (name: string) => string;
+};
+
+function NumberField({ ctx, name, label }: { ctx: FieldContext; name: keyof RequirementRow; label: string }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor={ctx.id(name)}>{label}</Label>
+      <Input
+        id={ctx.id(name)}
+        name={name}
+        type="number"
+        min="0"
+        defaultValue={(ctx.r?.[name] as number | null | undefined) ?? ""}
+      />
+    </div>
+  );
+}
+
+function CheckboxGroup({
+  ctx,
+  name,
+  label,
+  options,
+  scroll = false,
+  hint,
+}: {
+  ctx: FieldContext;
+  name: "property_types" | "district_ids" | "area_ids" | "features_required";
+  label: string;
+  options: { value: string; text: string }[];
+  scroll?: boolean;
+  hint?: string;
+}) {
+  const chosen = ctx.r?.[name] ?? [];
+  return (
+    <div className="flex flex-col gap-2 sm:col-span-3">
+      <Label id={ctx.id(`${name}-label`)}>{label}</Label>
+      <div
+        role="group"
+        aria-labelledby={ctx.id(`${name}-label`)}
+        className={
+          scroll
+            ? "grid max-h-44 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4"
+            : "grid grid-cols-2 gap-2 sm:grid-cols-4"
+        }
+      >
+        {options.map((o) => (
+          <label key={o.value} className="flex items-center gap-1.5 text-sm">
+            <Checkbox name={name} value={o.value} defaultChecked={chosen.includes(o.value)} />
+            {o.text}
+          </label>
+        ))}
+      </div>
+      {hint ? <p className="text-xs text-text-3">{hint}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * One renderer per requirement field. A `Record` over BOTH engine lists, so a
+ * field the engine gains and the form forgets is a type error, and the groups
+ * below are drawn by mapping the engine's lists over this — never by hand.
+ */
+const FIELDS: Record<HardRequirementField | SoftRequirementField, (ctx: FieldContext) => ReactNode> = {
+  transaction_type: (ctx) => (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor={ctx.id("transaction_type")}>Buying or renting</Label>
+      <Select name="transaction_type" defaultValue={ctx.r?.transaction_type ?? "sale"}>
+        <SelectTrigger id={ctx.id("transaction_type")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {TRANSACTION_TYPES.map((t) => (
+            <SelectItem key={t} value={t}>
+              {labelize(t)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  ),
+  budget_max: (ctx) => <NumberField ctx={ctx} name="budget_max" label="Budget max (€)" />,
+  bedrooms_min: (ctx) => <NumberField ctx={ctx} name="bedrooms_min" label="Bedrooms min" />,
+  bedrooms_max: (ctx) => <NumberField ctx={ctx} name="bedrooms_max" label="Bedrooms max" />,
+  title_deed_required: (ctx) => (
+    <div className="flex items-end gap-2 pb-2">
+      <label htmlFor={ctx.id("title_deed_required")} className="flex items-center gap-2 text-sm">
+        <Checkbox
+          id={ctx.id("title_deed_required")}
+          name="title_deed_required"
+          value="on"
+          defaultChecked={ctx.r?.title_deed_required ?? false}
+        />
+        Separate title deed required
+      </label>
+    </div>
+  ),
+  property_types: (ctx) => (
+    <CheckboxGroup
+      ctx={ctx}
+      name="property_types"
+      label="Property types"
+      options={PROPERTY_TYPES.map((t) => ({ value: t, text: labelize(t) }))}
+      hint="Leave all unticked to mean “any type”."
+    />
+  ),
+  district_ids: (ctx) => (
+    <CheckboxGroup
+      ctx={ctx}
+      name="district_ids"
+      label="Districts"
+      options={ctx.districts.map((d) => ({ value: d.id, text: d.name }))}
+      hint="Leave all unticked to mean “anywhere”."
+    />
+  ),
+  budget_min: (ctx) => <NumberField ctx={ctx} name="budget_min" label="Budget min (€)" />,
+  delivery_by: (ctx) => (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor={ctx.id("delivery_by")}>Delivery by</Label>
+      <Input
+        id={ctx.id("delivery_by")}
+        name="delivery_by"
+        type="date"
+        defaultValue={ctx.r?.delivery_by ?? ""}
+      />
+    </div>
+  ),
+  vat_preference: (ctx) => (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor={ctx.id("vat_preference")}>VAT treatment</Label>
+      <Select name="vat_preference" defaultValue={ctx.r?.vat_preference ?? SELECT_NONE}>
+        <SelectTrigger id={ctx.id("vat_preference")}>
+          <SelectValue placeholder="Select…" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={SELECT_NONE}>—</SelectItem>
+          {VAT_STATUSES.map((v) => (
+            <SelectItem key={v} value={v}>
+              {labelize(v)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  ),
+  bathrooms_min: (ctx) => <NumberField ctx={ctx} name="bathrooms_min" label="Bathrooms min" />,
+  covered_area_min_sqm: (ctx) => (
+    <NumberField ctx={ctx} name="covered_area_min_sqm" label="Covered area min (m²)" />
+  ),
+  plot_area_min_sqm: (ctx) => <NumberField ctx={ctx} name="plot_area_min_sqm" label="Plot area min (m²)" />,
+  max_sea_distance_m: (ctx) => (
+    <NumberField ctx={ctx} name="max_sea_distance_m" label="Max distance to sea (m)" />
+  ),
+  area_ids: (ctx) =>
+    ctx.areas.length > 0 ? (
+      <CheckboxGroup
+        ctx={ctx}
+        name="area_ids"
+        label="Areas"
+        options={ctx.areas.map((a) => ({ value: a.id, text: a.name }))}
+        scroll
+      />
+    ) : null,
+  features_required: (ctx) => (
+    <CheckboxGroup
+      ctx={ctx}
+      name="features_required"
+      label="Features wanted"
+      options={PROPERTY_FEATURES.map(([key, featureName]) => ({ value: key, text: featureName }))}
+      scroll
+    />
+  ),
+};
+
+/** Exported for tests/unit/requirements-form-groups.test.ts, which renders it. */
+export function RequirementFields({
   r,
   districts,
   areas,
@@ -103,14 +307,14 @@ function RequirementFields({
   // id makes a <label htmlFor> point at the wrong control, which A11Y-1's E2E
   // guard would catch but a reader would not.
   const uid = r?.id ?? "new";
-  const id = (n: string) => `${n}-${uid}`;
+  const ctx: FieldContext = { r, districts, areas, id: (n) => `${n}-${uid}` };
 
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      <div className="flex flex-col gap-2 sm:col-span-2">
-        <Label htmlFor={id("label")}>Name this search</Label>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={ctx.id("label")}>Name this search</Label>
         <Input
-          id={id("label")}
+          id={ctx.id("label")}
           name="label"
           maxLength={120}
           placeholder="Sea view 2-bed, Kato Paphos"
@@ -118,228 +322,38 @@ function RequirementFields({
         />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("transaction_type")}>Buying or renting</Label>
-        <Select name="transaction_type" defaultValue={r?.transaction_type ?? "sale"}>
-          <SelectTrigger id={id("transaction_type")}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TRANSACTION_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {labelize(t)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("budget_min")}>Budget min (€)</Label>
-        <Input
-          id={id("budget_min")}
-          name="budget_min"
-          type="number"
-          min="0"
-          defaultValue={r?.budget_min ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("budget_max")}>Budget max (€)</Label>
-        <Input
-          id={id("budget_max")}
-          name="budget_max"
-          type="number"
-          min="0"
-          defaultValue={r?.budget_max ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("delivery_by")}>Delivery by</Label>
-        <Input
-          id={id("delivery_by")}
-          name="delivery_by"
-          type="date"
-          defaultValue={r?.delivery_by ?? ""}
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("bedrooms_min")}>Bedrooms min</Label>
-        <Input
-          id={id("bedrooms_min")}
-          name="bedrooms_min"
-          type="number"
-          min="0"
-          defaultValue={r?.bedrooms_min ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("bedrooms_max")}>Bedrooms max</Label>
-        <Input
-          id={id("bedrooms_max")}
-          name="bedrooms_max"
-          type="number"
-          min="0"
-          defaultValue={r?.bedrooms_max ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("bathrooms_min")}>Bathrooms min</Label>
-        <Input
-          id={id("bathrooms_min")}
-          name="bathrooms_min"
-          type="number"
-          min="0"
-          defaultValue={r?.bathrooms_min ?? ""}
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("covered_area_min_sqm")}>Covered area min (m²)</Label>
-        <Input
-          id={id("covered_area_min_sqm")}
-          name="covered_area_min_sqm"
-          type="number"
-          min="0"
-          defaultValue={r?.covered_area_min_sqm ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("plot_area_min_sqm")}>Plot area min (m²)</Label>
-        <Input
-          id={id("plot_area_min_sqm")}
-          name="plot_area_min_sqm"
-          type="number"
-          min="0"
-          defaultValue={r?.plot_area_min_sqm ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("max_sea_distance_m")}>Max distance to sea (m)</Label>
-        <Input
-          id={id("max_sea_distance_m")}
-          name="max_sea_distance_m"
-          type="number"
-          min="0"
-          defaultValue={r?.max_sea_distance_m ?? ""}
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={id("vat_preference")}>VAT treatment</Label>
-        <Select name="vat_preference" defaultValue={r?.vat_preference ?? SELECT_NONE}>
-          <SelectTrigger id={id("vat_preference")}>
-            <SelectValue placeholder="Select…" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={SELECT_NONE}>—</SelectItem>
-            {VAT_STATUSES.map((v) => (
-              <SelectItem key={v} value={v}>
-                {labelize(v)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex items-end gap-2 pb-2">
-        <label className="flex items-center gap-2 text-sm">
-          <Checkbox
-            name="title_deed_required"
-            value="on"
-            defaultChecked={r?.title_deed_required ?? false}
-          />
-          Separate title deed required
-        </label>
-      </div>
-
-      <div className="flex flex-col gap-2 sm:col-span-3">
-        <Label id={id("types-label")}>Property types</Label>
-        <div
-          role="group"
-          aria-labelledby={id("types-label")}
-          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-        >
-          {PROPERTY_TYPES.map((t) => (
-            <label key={t} className="flex items-center gap-1.5 text-sm">
-              <Checkbox
-                name="property_types"
-                value={t}
-                defaultChecked={(r?.property_types ?? []).includes(t)}
-              />
-              {labelize(t)}
-            </label>
-          ))}
+      <div className="flex flex-col gap-3 rounded-[8px] border border-border p-4">
+        <div>
+          <h3 className="text-sm font-semibold text-text-1">Must match</h3>
+          <p className="text-xs text-text-2">
+            A listing that misses any of these is not shown. The budget allows {BUDGET_TOLERANCE_PCT}% over —
+            those still show, marked with how much.
+          </p>
         </div>
-        <p className="text-xs text-text-3">Leave all unticked to mean “any type”.</p>
-      </div>
-
-      <div className="flex flex-col gap-2 sm:col-span-3">
-        <Label id={id("districts-label")}>Districts</Label>
-        <div
-          role="group"
-          aria-labelledby={id("districts-label")}
-          className="grid grid-cols-2 gap-2 sm:grid-cols-5"
-        >
-          {districts.map((d) => (
-            <label key={d.id} className="flex items-center gap-1.5 text-sm">
-              <Checkbox
-                name="district_ids"
-                value={d.id}
-                defaultChecked={(r?.district_ids ?? []).includes(d.id)}
-              />
-              {d.name}
-            </label>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {HARD_REQUIREMENT_FIELDS.map((f) => (
+            <Fragment key={f}>{FIELDS[f](ctx)}</Fragment>
           ))}
         </div>
       </div>
 
-      {areas.length > 0 ? (
-        <div className="flex flex-col gap-2 sm:col-span-3">
-          <Label id={id("areas-label")}>Areas</Label>
-          <div
-            role="group"
-            aria-labelledby={id("areas-label")}
-            className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4"
-          >
-            {areas.map((a) => (
-              <label key={a.id} className="flex items-center gap-1.5 text-sm">
-                <Checkbox
-                  name="area_ids"
-                  value={a.id}
-                  defaultChecked={(r?.area_ids ?? []).includes(a.id)}
-                />
-                {a.name}
-              </label>
-            ))}
-          </div>
+      <div className="flex flex-col gap-3 rounded-[8px] border border-border p-4">
+        <div>
+          <h3 className="text-sm font-semibold text-text-1">Preferences</h3>
+          <p className="text-xs text-text-2">
+            These rank listings and are named when missed — they never hide one.
+          </p>
         </div>
-      ) : null}
-
-      <div className="flex flex-col gap-2 sm:col-span-3">
-        <Label id={id("features-label")}>Must have</Label>
-        <div
-          role="group"
-          aria-labelledby={id("features-label")}
-          className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4"
-        >
-          {PROPERTY_FEATURES.map(([key, featureName]) => (
-            <label key={key} className="flex items-center gap-1.5 text-sm">
-              <Checkbox
-                name="features_required"
-                value={key}
-                defaultChecked={(r?.features_required ?? []).includes(key)}
-              />
-              {featureName}
-            </label>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {SOFT_REQUIREMENT_FIELDS.map((f) => (
+            <Fragment key={f}>{FIELDS[f](ctx)}</Fragment>
           ))}
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 sm:col-span-3">
-        <Label htmlFor={id("notes")}>Notes</Label>
-        <Textarea id={id("notes")} name="notes" rows={2} defaultValue={r?.notes ?? ""} />
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={ctx.id("notes")}>Notes</Label>
+        <Textarea id={ctx.id("notes")} name="notes" rows={2} defaultValue={r?.notes ?? ""} />
       </div>
     </div>
   );
@@ -359,14 +373,12 @@ export function RequirementsCard({
   areas: NamedOption[];
   readOnly?: boolean;
   readOnlyHint?: string;
-  /** the pre-0043 blob, shown only while it still holds something no row does */
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
   const active = requirements.filter((r) => r.is_active);
   const archived = requirements.filter((r) => !r.is_active);
-
 
   return (
     <div className="flex flex-col gap-4">
@@ -377,49 +389,57 @@ export function RequirementsCard({
       ) : null}
 
       <ul className="flex flex-col gap-3">
-        {active.map((r) => (
-          <li key={r.id} className="rounded-[10px] border border-border bg-surface p-4">
-            {editing === r.id ? (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-text-1">Edit search</p>
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>
-                    <X className="size-4" /> Cancel
-                  </Button>
-                </div>
-                <ActionSectionForm
-                  action={saveBuyerRequirement}
-                  hidden={{ contact_id: contactId, requirement_id: r.id }}
-                  readOnly={readOnly}
-                  readOnlyHint={readOnlyHint}
-                >
-                  <RequirementFields r={r} districts={districts} areas={areas} />
-                </ActionSectionForm>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-text-1">
-                    {r.label || "Untitled search"}
-                    <span className="ml-2 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-normal text-text-2">
-                      {labelize(r.transaction_type)}
-                    </span>
-                  </p>
-                  <p className="mt-1 text-sm text-text-2">{summarise(r, districts, areas)}</p>
-                  {r.notes ? <p className="mt-1 text-xs text-text-3">{r.notes}</p> : null}
-                </div>
-                {!readOnly ? (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(r.id)}>
-                      <Pencil className="size-4" /> Edit
+        {active.map((r) => {
+          const open = notStated(r);
+          return (
+            <li key={r.id} className="rounded-[10px] border border-border bg-surface p-4">
+              {editing === r.id ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-text-1">Edit search</p>
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>
+                      <X className="size-4" /> Cancel
                     </Button>
-                    <ArchiveToggle id={r.id} nextActive={false} label="Archive" />
                   </div>
-                ) : null}
-              </div>
-            )}
-          </li>
-        ))}
+                  <ActionSectionForm
+                    action={saveBuyerRequirement}
+                    hidden={{ contact_id: contactId, requirement_id: r.id }}
+                    readOnly={readOnly}
+                    readOnlyHint={readOnlyHint}
+                  >
+                    <RequirementFields r={r} districts={districts} areas={areas} />
+                  </ActionSectionForm>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-1">
+                      {r.label || "Untitled search"}
+                      <span className="ml-2 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-normal text-text-2">
+                        {labelize(r.transaction_type)}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-sm text-text-2">{summarise(r, districts, areas)}</p>
+                    {open ? (
+                      <p className="mt-1 text-xs text-warning">
+                        {open} — matches ignore what was not said; ask the buyer.
+                      </p>
+                    ) : null}
+                    {r.notes ? <p className="mt-1 text-xs text-text-3">{r.notes}</p> : null}
+                  </div>
+                  {!readOnly ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => setEditing(r.id)}>
+                        <Pencil className="size-4" /> Edit
+                      </Button>
+                      <ArchiveToggle id={r.id} nextActive={false} label="Archive" />
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
 
       {!readOnly ? (

@@ -36,6 +36,7 @@ test.describe("protected routes", () => {
     "/properties/export",
     "/leads/export",
     "/pipeline/export",
+    "/deals/export",
     "/viewings/export",
     "/keys/export",
     "/tasks/export",

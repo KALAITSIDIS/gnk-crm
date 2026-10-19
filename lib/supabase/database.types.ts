@@ -802,6 +802,7 @@ export type Database = {
           entity_type: string
           id: string
           org_id: string
+          outcome: string | null
           redacted_at: string | null
         }
         Insert: {
@@ -814,6 +815,7 @@ export type Database = {
           entity_type: string
           id?: string
           org_id: string
+          outcome?: string | null
           redacted_at?: string | null
         }
         Update: {
@@ -826,6 +828,7 @@ export type Database = {
           entity_type?: string
           id?: string
           org_id?: string
+          outcome?: string | null
           redacted_at?: string | null
         }
         Relationships: [
@@ -3663,6 +3666,7 @@ export type Database = {
           p_entity_id: string
           p_entity_type: string
           p_note: string
+          p_outcome?: string
         }
         Returns: string
       }
@@ -3762,6 +3766,14 @@ export type Database = {
       preview_lead_escalation: {
         Args: { p_limit?: number; p_now?: string; p_policy: Json }
         Returns: Json
+      }
+      property_inventory_counts: {
+        Args: never
+        Returns: {
+          kind: Database["public"]["Enums"]["property_kind"]
+          n: number
+          status: Database["public"]["Enums"]["property_status"]
+        }[]
       }
       public_listings: {
         Args: {

@@ -6,14 +6,20 @@ import { toCsv, csvFilename } from "@/lib/services/csv";
 import { zonedDateRangeToUtc } from "@/lib/utils/tz";
 import {
   agentPerformanceCsv,
+  isPriceReductions,
   isReportKey,
+  isTimeToClose,
   priceReductionsCsv,
+  reportObject,
+  reportRows,
   sourceRoiCsv,
   stageConversionCsv,
   stageConversionView,
   timeToCloseCsv,
   timeToCloseRows,
   withExcluded,
+  withSourceSplits,
+  withStageSplits,
   withWindow,
   type AgentPerformanceRow,
   type PriceReductions,
@@ -52,12 +58,16 @@ export async function GET(request: NextRequest) {
 
   let csv: string;
   let rowCount: number;
+  // An RPC error, or an answer that is not the report, is a failed export —
+  // never a header-only file that reads as an empty window (F06; the stage
+  // report has done this since 0130).
+  const failed = () => NextResponse.json({ error: "Export failed." }, { status: 500 });
 
   switch (report) {
     case "agent_performance": {
-      const { data, error } = await supabase.rpc("report_agent_performance", win);
-      if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      const rows = (data ?? []) as unknown as AgentPerformanceRow[];
+      const view = reportRows<AgentPerformanceRow>(await supabase.rpc("report_agent_performance", win));
+      if (view.status === "error") return failed();
+      const rows = view.rows;
       const ids = rows.map((r) => r.agent_id);
       const { data: profiles } = ids.length
         ? await supabase.from("profiles").select("id, full_name, is_active").in("id", ids)
@@ -73,24 +83,25 @@ export async function GET(request: NextRequest) {
       break;
     }
     case "source_roi": {
-      const { data, error } = await supabase.rpc("report_source_roi", win);
-      if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      const rows = (data ?? []) as unknown as SourceRoiRow[];
-      csv = toCsv(withWindow(sourceRoiCsv(), from, to), rows);
+      const view = reportRows<SourceRoiRow>(await supabase.rpc("report_source_roi", win));
+      if (view.status === "error") return failed();
+      const rows = view.rows;
+      // 0154: Spam and "Converted, deal visible" appended after From / To
+      csv = toCsv(withSourceSplits(withWindow(sourceRoiCsv(), from, to)), rows);
       rowCount = rows.length;
       break;
     }
     case "time_to_close": {
-      const { data, error } = await supabase.rpc("report_time_to_close", win);
-      if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      const rows = timeToCloseRows(data as unknown as TimeToClose);
+      const view = reportObject<TimeToClose>(await supabase.rpc("report_time_to_close", win), isTimeToClose);
+      if (view.status === "error") return failed();
+      const rows = timeToCloseRows(view.value);
       csv = toCsv(withWindow(timeToCloseCsv(), from, to), rows);
       rowCount = rows.length;
       break;
     }
     case "stage_conversion": {
       const view = stageConversionView(await supabase.rpc("report_stage_conversion", win));
-      if (view.status === "error") return NextResponse.json({ error: "Export failed." }, { status: 500 });
+      if (view.status === "error") return failed();
       // 0130: no stage row, but malformed stage changes were excluded. A
       // header-only file has no row to carry the count and would read as a
       // complete, empty report, so refuse — the page shows the same window's
@@ -107,17 +118,24 @@ export async function GET(request: NextRequest) {
         );
       }
       const rows = view.conv.stages;
+      // 0154: Deal type, Moved back, Direction unknown and Stage id appended
+      // after the exclusion count — blank against a database still at 0130
       csv = toCsv(
-        withExcluded(withWindow(stageConversionCsv(view.conv.note ?? ""), from, to), view.excluded),
+        withStageSplits(
+          withExcluded(withWindow(stageConversionCsv(view.conv.note ?? ""), from, to), view.excluded),
+        ),
         rows,
       );
       rowCount = rows.length;
       break;
     }
     case "price_reductions": {
-      const { data, error } = await supabase.rpc("report_price_reductions", win);
-      if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      const cuts = (data as unknown as PriceReductions)?.repeat_cuts ?? [];
+      const view = reportObject<PriceReductions>(
+        await supabase.rpc("report_price_reductions", win),
+        isPriceReductions,
+      );
+      if (view.status === "error") return failed();
+      const cuts = view.value.repeat_cuts;
       const ids = cuts.map((c) => c.property_id);
       const { data: props } = ids.length
         ? await supabase.from("properties").select("id, reference").in("id", ids)

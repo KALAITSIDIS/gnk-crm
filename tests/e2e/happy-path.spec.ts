@@ -154,7 +154,8 @@ test.describe.serial("critical path", () => {
 
     const text = await page.locator("main").innerText();
     // KPI tiles must render figures, not placeholders.
-    expect(text, "dashboard shows no listing breakdown").toMatch(/listings by status/i);
+    // F04-C renamed the card "Listings by status" → "Inventory by status"
+    expect(text, "dashboard shows no listing breakdown").toMatch(/inventory by status/i);
     expect(text).toMatch(/pipeline/i);
     // The freshly created property must be counted in the status breakdown.
     expect(text, "no draft listings counted after creating one").toMatch(/draft/i);

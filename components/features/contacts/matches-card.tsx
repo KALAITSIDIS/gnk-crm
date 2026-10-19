@@ -1,17 +1,21 @@
-import Link from "next/link";
+import { MatchEmpty, MatchFooter } from "@/components/features/shared/match-list";
 import {
-  MatchEmpty,
-  MatchFooter,
-  MatchReasons,
-  ScoreBadge,
-} from "@/components/features/shared/match-list";
+  MatchProposalList,
+  type ContactMatchRow,
+  type ProposalBuyer,
+} from "@/components/features/shared/match-proposal";
 import { findMatchingProperties } from "@/lib/queries/matches";
+import { latestProposalBy, type ProposalHistory } from "@/lib/queries/proposals-sent";
+import { proposedDetail } from "@/lib/services/match-proposal";
 import { priceFor, type MatchRequirement } from "@/lib/services/matching";
 import { createClient } from "@/lib/supabase/server";
-import { formatMoney } from "@/lib/utils/format";
+import { formatDate, formatMoney } from "@/lib/utils/format";
 
 /**
- * Properties that suit this buyer (0043, T-B6).
+ * Properties that suit this buyer (0043, T-B6) — and, since A04, what to do
+ * with them: tick some and mint ONE proposal bound to this buyer, or schedule
+ * a viewing of one, from the row. A listing already in a proposal for this
+ * buyer says "Proposed <date>".
  *
  * One section per ACTIVE saved search, because "which search matched" is part
  * of the answer — collapsing them into one deduplicated list would tell an
@@ -33,8 +37,18 @@ function propertyTitle(title: Record<string, string> | null, reference: string):
 
 export async function MatchesCard({
   requirements,
+  buyer,
+  canAct,
+  role,
+  proposals,
 }: {
   requirements: RequirementForMatching[];
+  buyer: ProposalBuyer;
+  /** false for an archived or erased contact: matches are shown, nothing is offered */
+  canAct: boolean;
+  role: string;
+  /** this buyer's proposals (lib/queries/proposals-sent.ts), read once by the page */
+  proposals: ProposalHistory;
 }) {
   const active = requirements.filter((r) => r.is_active);
 
@@ -46,11 +60,49 @@ export async function MatchesCard({
 
   const supabase = await createClient();
   const results = await Promise.all(active.map((r) => findMatchingProperties(supabase, r)));
+  const proposedBy = proposals.ok ? latestProposalBy(proposals.proposals, "property") : null;
+  const now = new Date();
 
   return (
     <div className="flex flex-col gap-6">
+      {/* never "not proposed" for "could not tell" */}
+      {!proposals.ok ? (
+        <p className="text-xs text-warning" role="status">
+          Proposal history is unavailable just now — listings already proposed to this buyer cannot be marked.
+        </p>
+      ) : proposals.capped ? (
+        <p className="text-xs text-text-3">
+          &ldquo;Proposed&rdquo; marks cover this buyer&rsquo;s latest {proposals.proposals.length} proposals only.
+        </p>
+      ) : null}
+
       {active.map((req, i) => {
         const result = results[i]!;
+        const rows: ContactMatchRow[] = result.rows.map(({ property, verdict }) => {
+          // The price the SEARCH is about, not always the sale price: a rental
+          // brief compares against `rent_price_month`, and printing
+          // `asking_price` showed a rent match its sale figure — or "no price
+          // set" — beside the chip saying the rent was within budget. One
+          // rule, in lib/services/matching.ts, for the matcher and the desk.
+          const shown = priceFor(req.transaction_type, property);
+          const price =
+            shown !== null
+              ? ` · ${formatMoney(shown)}${req.transaction_type === "rent" ? " / month" : ""}`
+              : " · no price set";
+          const sent = proposedBy?.get(property.id) ?? null;
+          return {
+            listing: {
+              id: property.id,
+              reference: property.reference,
+              status: property.status,
+              visibility: property.visibility,
+            },
+            title: propertyTitle(property.title, property.reference),
+            subline: `${property.reference}${price}${property.bedrooms !== null ? ` · ${property.bedrooms} bed` : ""}`,
+            verdict,
+            proposed: sent ? { date: formatDate(sent.createdAt), detail: proposedDetail(sent, now) } : null,
+          };
+        });
         return (
           <section key={req.id} className="flex flex-col gap-2">
             {active.length > 1 ? (
@@ -59,7 +111,7 @@ export async function MatchesCard({
               </h3>
             ) : null}
 
-            {result.rows.length === 0 ? (
+            {rows.length === 0 ? (
               <MatchEmpty
                 text="Nothing on the books matches this search yet."
                 href="/properties"
@@ -67,47 +119,7 @@ export async function MatchesCard({
               />
             ) : (
               <>
-                <ul className="flex flex-col gap-2">
-                  {result.rows.map(({ property, verdict }) => (
-                    <li
-                      key={property.id}
-                      className="rounded-[10px] border border-border bg-surface p-3"
-                    >
-                      <div className="flex items-start gap-3">
-                        <ScoreBadge score={verdict.score} />
-                        <div className="min-w-0 flex-1">
-                          <Link
-                            href={`/properties/${property.id}`}
-                            className="text-sm font-medium text-text-1 underline-offset-2 hover:underline"
-                          >
-                            {propertyTitle(property.title, property.reference)}
-                          </Link>
-                          <p className="text-xs text-text-3">
-                            {property.reference}
-                            {/*
-                              The price the SEARCH is about, not the sale price
-                              always. A rental brief compares against
-                              `rent_price_month`; printing `asking_price` here
-                              showed a rent match its sale figure — or "no price
-                              set" for a rent-only listing — directly beside the
-                              chip saying the rent was within budget. One rule,
-                              in lib/services/matching.ts, for the matcher and
-                              for what the desk reads.
-                            */}
-                            {(() => {
-                              const shown = priceFor(req.transaction_type, property);
-                              return shown !== null
-                                ? ` · ${formatMoney(shown)}${req.transaction_type === "rent" ? " / month" : ""}`
-                                : " · no price set";
-                            })()}
-                            {property.bedrooms !== null ? ` · ${property.bedrooms} bed` : ""}
-                          </p>
-                          <MatchReasons verdict={verdict} />
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                <MatchProposalList listKey={req.id} buyer={buyer} rows={rows} canAct={canAct} role={role} />
                 <MatchFooter
                   shown={result.rows.length}
                   considered={result.considered}

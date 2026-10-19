@@ -12,20 +12,30 @@ import { DealOutcomeActions } from "@/components/features/deals/outcome-actions"
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { CreateViewingDialog } from "@/components/features/viewings/create-viewing-dialog";
-import { EventTimeline } from "@/components/features/shared/event-timeline";
+import { ActivityFeed } from "@/components/features/shared/event-timeline";
 import { HealthDot } from "@/components/features/shared/health-dot";
 import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
-import type { HealthFactor } from "@/lib/services/health-score";
+import { healthAssessedLine, liveHealth } from "@/lib/services/health-score";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { isGuid } from "@/lib/validators/ids";
 import { dealValue, dealValueIsFinal } from "@/lib/services/deal-value";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
 import type { OfferStatus } from "@/lib/validators/deals";
-import { readEntityTimeline } from "@/lib/services/entity-timeline";
+import { readEntityTimelines } from "@/lib/services/entity-timeline";
+import { readRecordViewingIds } from "@/lib/queries/record-viewing-ids";
+import type { Metadata } from "next";
+
+/**
+ * The browser tab's name (A08): the generic word only — never the record's
+ * name or a person's, because tab titles land in browser history on shared
+ * devices. Static on purpose: no generateMetadata here (tests/unit/page-titles.test.ts).
+ */
+export const metadata: Metadata = { title: "Deal" };
 
 const STATUS_TONES: Record<string, string> = {
   open: "bg-brand-100 text-brand-700",
@@ -50,7 +60,7 @@ export default async function DealDetailPage({
   const headerValue = dealValue(deal);
   const headerIsFinal = dealValueIsFinal(deal);
 
-  const [{ data: stage }, { data: offerRows }, { data: nudgeCfg }] = await Promise.all([
+  const [{ data: stage }, offersRes, { data: nudgeCfg }] = await Promise.all([
     supabase
       .from("deal_stages")
       .select("id, name, is_won, is_lost")
@@ -69,7 +79,9 @@ export default async function DealDetailPage({
       .eq("key", "nudge_thresholds")
       .maybeSingle(),
   ]);
-  const offers = offerRows ?? [];
+  // A failed read is the page's failure, not "no offers": the Offers card,
+  // Won-eligibility and the Activity feed's offer lines all stand on it.
+  const offers = unwrapRows(offersRes, "deal offers");
 
   const contactIds = [
     deal.buyer_contact_id,
@@ -78,7 +90,7 @@ export default async function DealDetailPage({
   ].filter((v): v is string => Boolean(v));
   const offerIds = offers.map((o) => o.id);
 
-  const [contactsRes, agentRes, propertyRes, dealEventsRes, offerEventsRes] = await Promise.all([
+  const [contactsRes, agentRes, propertyRes, timeline] = await Promise.all([
     contactIds.length
       ? supabase.from("contacts").select("id, display_name, phone_e164, email").in("id", contactIds)
       : Promise.resolve({ data: [] as { id: string; display_name: string | null; phone_e164: string | null; email: string | null }[] }),
@@ -92,29 +104,30 @@ export default async function DealDetailPage({
           .eq("id", deal.property_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
-    // As the SYSTEM — see lib/services/entity-timeline.ts. `events_select` shows
-    // a non-admin only rows they authored, so on the caller's client a deal's
-    // history was whatever THIS agent had done to it. The page notFound()s
-    // above when RLS withholds the deal, and `deals` SELECT is the narrowest of
-    // the three (admin, the deal's agent or its creator, LM read-only), so an
-    // id reaching here is proof the caller may see the deal.
-    readEntityTimeline({
-      orgId: profile.orgId,
-      viewerRole: profile.role,
-      viewer: supabase,
-      entityType: "deal",
-      entityIds: [id],
-      limit: 50,
-    }).then((data) => ({ data })),
-    // offerIds came from an offers read on the caller's own client
-    readEntityTimeline({
-      orgId: profile.orgId,
-      viewerRole: profile.role,
-      viewer: supabase,
-      entityType: "offer",
-      entityIds: offerIds,
-      limit: 50,
-    }).then((data) => ({ data })),
+    // Combined Activity (A06): the deal, its offers and its viewings as ONE
+    // feed, read as the SYSTEM — see lib/services/entity-timeline.ts.
+    // `events_select` shows a non-admin only rows they authored, so on the
+    // caller's client a deal's history was whatever THIS agent had done to it.
+    // The page notFound()s above when RLS withholds the deal (`deals` SELECT
+    // is the narrowest of the three: admin, the deal's agent or its creator,
+    // LM read-only), offerIds came from an offers read on this client, and
+    // the viewing ids are EVERY viewing linked to the deal, read on this
+    // client too (paged; a failed page fails the page) — not the card's ten
+    // below. A signed slip's names are withheld from non-admins by the reader.
+    readRecordViewingIds(supabase, { column: "deal_id", id }).then((viewingIds) =>
+      readEntityTimelines({
+        orgId: profile.orgId,
+        viewerRole: profile.role,
+        viewer: supabase,
+        sources: [
+          { entityType: "deal", entityIds: [id] },
+          { entityType: "offer", entityIds: offerIds },
+          { entityType: "viewing", entityIds: viewingIds },
+        ],
+        perSource: 50,
+        limit: 50,
+      }),
+    ),
   ]);
 
   // WF-3: the viewing-deal link was dead plumbing — schema and action accept
@@ -140,19 +153,6 @@ export default async function DealDetailPage({
   const agent = agentRes.data;
   const property = propertyRes.data;
 
-  // combined feed: deal events + this deal's offer events (rich lines: T3.5)
-  const events = [...(dealEventsRes.data ?? []), ...(offerEventsRes.data ?? [])]
-    // newest first; events of one transaction share occurred_at (a close
-    // writes won_override and won together, 0117), and id is chain order
-    .sort((a, b) =>
-      a.occurred_at === b.occurred_at
-        ? Number(b.id) - Number(a.id)
-        : a.occurred_at < b.occurred_at
-          ? 1
-          : -1,
-    )
-    .slice(0, 50);
-
   // WF-8: lapsed is DERIVED on read, per-request clock, Cyprus end-of-day —
   // no cron, no status write. The manual Expire button stays the decision;
   // this is the honest badge until someone takes it.
@@ -175,11 +175,17 @@ export default async function DealDetailPage({
   const wonEligible = deal.status === "open" && offers.some((o) => o.status === "accepted");
   const acceptedAmount = offers.find((o) => o.status === "accepted")?.amount ?? null;
 
-  const healthJson = (deal.health ?? {}) as {
-    budget_confirmed?: boolean;
-    factors?: HealthFactor[];
-  };
-  const healthFactors = Array.isArray(healthJson.factors) ? healthJson.factors : null;
+  const healthJson = (deal.health ?? {}) as { budget_confirmed?: boolean };
+  // an open deal's activity factor as of this request; a won/lost deal's as
+  // stored; nothing written back (A09). Same per-request clock as `lapsed`.
+  const health = liveHealth(deal, new Date(nowMs));
+  const healthNote = healthAssessedLine(health);
+  // F01: the calculators open at the deal's figure, with the property's own
+  // context (its VAT status) when the deal names one — the price stays the deal's
+  const costsHref =
+    headerValue === null
+      ? null
+      : `/calculators?price=${headerValue}${deal.property_id ? `&property=${deal.property_id}` : ""}`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -207,7 +213,7 @@ export default async function DealDetailPage({
               {stage.name}
             </span>
           ) : null}
-          <HealthDot score={deal.health_score} factors={healthFactors} />
+          <HealthDot score={health.score} factors={health.factors} note={healthNote} />
           <AddTaskDialog entity={{ deal_id: deal.id }} entityLabel={deal.title} />
           {/* A won deal leads with its CONFIRMED price (dealValue — the board's
               and the dashboard's figure), labelled so it is never mistaken
@@ -218,9 +224,9 @@ export default async function DealDetailPage({
             <span className="text-text-3">{headerIsFinal ? "Final value" : "Expected value"}</span>{" "}
             {formatMoney(headerValue)}
           </span>
-          {headerValue !== null ? (
+          {costsHref !== null ? (
             <Link
-              href={`/calculators?price=${headerValue}`}
+              href={costsHref}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
               title={
                 headerIsFinal
@@ -378,7 +384,7 @@ export default async function DealDetailPage({
 
           <section className="rounded-[10px] border border-border bg-surface p-6">
             <h2 className="mb-3 text-sm font-semibold text-text-1">Activity</h2>
-            <EventTimeline events={events} />
+            <ActivityFeed timeline={timeline} pageEntityType="deal" />
           </section>
         </div>
 
@@ -387,9 +393,10 @@ export default async function DealDetailPage({
             <h2 className="mb-3 text-sm font-semibold text-text-1">Health</h2>
             <HealthPanel
               dealId={deal.id}
-              score={deal.health_score}
+              score={health.score}
               budgetConfirmed={healthJson.budget_confirmed === true}
-              factors={healthFactors}
+              factors={health.factors}
+              note={healthNote}
             />
           </section>
 

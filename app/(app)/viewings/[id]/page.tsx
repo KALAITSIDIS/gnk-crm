@@ -6,6 +6,7 @@ import { SlipDownloadButton } from "@/components/features/viewings/slip-download
 import { ConfirmationCard } from "@/components/features/viewings/confirmation-card";
 import { RescheduleViewingDialog } from "@/components/features/viewings/reschedule-viewing-dialog";
 import { ViewingStatusActions } from "@/components/features/viewings/viewing-status-actions";
+import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -15,6 +16,14 @@ import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { ViewingFeedback, ViewingStatus } from "@/lib/validators/viewings";
 import { confirmationFreshness } from "@/lib/services/viewing-confirmation-freshness";
+import type { Metadata } from "next";
+
+/**
+ * The browser tab's name (A08): the generic word only — never the record's
+ * name or a person's, because tab titles land in browser history on shared
+ * devices. Static on purpose: no generateMetadata here (tests/unit/page-titles.test.ts).
+ */
+export const metadata: Metadata = { title: "Viewing" };
 
 export const dynamic = "force-dynamic";
 
@@ -140,6 +149,16 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
           >
             {status.replace("_", " ")}
           </span>
+          {/* A02: a follow-up from a viewing ("send the floor plan", "call the
+              owner about the price") lands on the viewing's own record; the
+              same gate as the other record pages — any staff role that can
+              see the viewing may add a task, for themselves or a colleague */}
+          <div className="ml-auto">
+            <AddTaskDialog
+              entity={{ viewing_id: v.id }}
+              entityLabel={property ? `viewing at ${property.reference}` : "this viewing"}
+            />
+          </div>
         </div>
       </div>
 

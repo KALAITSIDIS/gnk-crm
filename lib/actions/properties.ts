@@ -17,9 +17,10 @@ import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
 import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
-import { createPropertySchema } from "@/lib/validators/properties";
+import { createPropertySchema, isDwellingType } from "@/lib/validators/properties";
 import { isGuid } from "@/lib/validators/ids";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
+import type { QualityScoreSource } from "@/lib/services/quality-score";
 import { contactLinkError } from "@/lib/services/contact-reread";
 
 export type PropertyActionState = { error: string | null };
@@ -322,9 +323,9 @@ export async function createProperty(
     // apartments, a villa complex's units are villas. Only when the
     // development is already named after its dwelling type does that type
     // carry (the units page's generator defaults the same way; 2026-09-02
-    // review, critic pass).
-    const DWELLING_TYPES = new Set(["apartment", "villa", "townhouse", "house"]);
-    const unitPropertyType = DWELLING_TYPES.has(input.property_type)
+    // review, critic pass). DWELLING_TYPES is shared with the VAT panel's
+    // reduced-rate gate (F01), so the two cannot disagree on what a dwelling is.
+    const unitPropertyType = isDwellingType(input.property_type)
       ? input.property_type
       : layout === "villas"
         ? ("villa" as const)
@@ -406,8 +407,13 @@ export async function updatePropertySection(
   // typing the same numbers over a centroid changes nothing but the claim.
   let approxChange: { from: unknown; to: unknown } | null = null;
 
-  const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema, isStatusRegression } =
-    await import("@/lib/validators/properties");
+  const {
+    detailsSectionSchema,
+    detailsUpdates,
+    legalSectionSchema,
+    marketingSectionSchema,
+    isStatusRegression,
+  } = await import("@/lib/validators/properties");
 
   if (section === "details") {
     const parsed = detailsSectionSchema.safeParse({
@@ -429,54 +435,12 @@ export async function updatePropertySection(
       };
     }
 
-    updates = {
-      status: d.status,
-      visibility: d.visibility,
-      transaction_type: d.transaction_type,
-      area_id: d.area_id ?? null,
-      address: d.address ?? null,
-      postal_code: d.postal_code ?? null,
-      sea_distance_m: d.sea_distance_m ?? null,
-      amenities_notes: d.amenities_notes ?? null,
-      asking_price: d.asking_price ?? null,
-      min_acceptable_price: d.min_acceptable_price ?? null,
-      owner_net_price: d.owner_net_price ?? null,
-      rent_price_month: d.rent_price_month ?? null,
-      vat_status: d.vat_status,
-      covered_area_sqm: d.covered_area_sqm ?? null,
-      plot_area_sqm: d.plot_area_sqm ?? null,
-      veranda_sqm: d.veranda_sqm ?? null,
-      roof_garden_sqm: d.roof_garden_sqm ?? null,
-      basement_sqm: d.basement_sqm ?? null,
-      bedrooms: d.bedrooms ?? null,
-      bathrooms: d.bathrooms ?? null,
-      wc: d.wc ?? null,
-      parking_spaces: d.parking_spaces ?? null,
-      has_storage: d.has_storage,
-      floor_number: d.floor_number ?? null,
-      total_floors: d.total_floors ?? null,
-      year_built: d.year_built ?? null,
-      energy_class: d.energy_class ?? null,
-      features: d.features,
-      construction_status: d.construction_status ?? null,
-      delivery_date: d.delivery_date ?? null,
-      internal_notes: d.internal_notes ?? null,
-    };
-    // the land panel isn't rendered for non-land properties, so its absent
-    // checkboxes would read as `false` — only land rows take these columns
-    if (current.property_type === "land") {
-      Object.assign(updates, {
-        planning_zone_code: d.planning_zone_code ?? null,
-        building_density_pct: d.building_density_pct ?? null,
-        coverage_ratio_pct: d.coverage_ratio_pct ?? null,
-        max_floors: d.max_floors ?? null,
-        max_height_m: d.max_height_m ?? null,
-        road_frontage_m: d.road_frontage_m ?? null,
-        water_available: d.water_available,
-        electricity_available: d.electricity_available,
-        constraints_notes: d.constraints_notes ?? null,
-      });
-    }
+    // F07: which columns, and with what, is ONE pure function — the Details
+    // tab's per-type layout is pinned against it (property-layout.test.ts), so
+    // a field the form stops rendering can never become a column this save
+    // silently nulls. The land panel stays written for land rows only, and
+    // has_storage stays the Features key's mirror (F02).
+    updates = detailsUpdates(d, current);
 
     // location is a PostGIS point: DB returns EWKB hex, we write EWKT. Compare
     // decoded coords (rounded) so an unchanged point is not re-written every save.
@@ -600,11 +564,16 @@ export async function updatePropertySection(
   // score ≥ PUBLISH_THRESHOLD, unless an admin overrides (logged event).
   // Scored over current + pending updates: the fields fixed in THIS save must
   // count, otherwise filling the gaps and publishing in one go is rejected.
+  //
+  // F03: the score alone, still. The website essentials (a cover photo, an
+  // English title, a price) are REPORTED on the property page, the worklist
+  // and the dashboard; whether a missing one also blocks this transition is
+  // the operator's open decision (BACKLOG LST-09), not this code's.
   const goingPublic = updates.visibility === "public" && current.visibility !== "public";
   /** set when an admin's override clears the gate; written only once the publish itself has. */
   let overrideToLog: { score: number; threshold: number } | null = null;
   if (goingPublic) {
-    const { computeQualityScore, PUBLISH_THRESHOLD } = await import(
+    const { buildQualityInput, computeQualityScore, PUBLISH_THRESHOLD } = await import(
       "@/lib/services/quality-score"
     );
     const [{ data: media }, { data: activeMandates }] = await Promise.all([
@@ -626,7 +595,6 @@ export async function updatePropertySection(
       string,
       unknown
     >;
-    const isLand = merged.property_type === "land";
     const isContainer = current.kind === "project" || current.kind === "phase";
     // ONE definition of "a unit" — kind = unit, not archived, under the
     // container or any of its phases (container-units.ts). The first cut
@@ -660,33 +628,22 @@ export async function updatePropertySection(
         savedAt: null,
       };
     }
-    const result = computeQualityScore({
-      isLand,
-      isContainer,
-      unitCount: units.unitCount,
-      pricedUnitCount: units.pricedUnitCount,
-      hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
-      photoCount: (media ?? []).length,
-      titleEn: (merged.title as { en?: string } | null)?.en,
-      publicDescriptionEn: (merged.public_description as { en?: string } | null)?.en,
-      hasPrice: merged.asking_price != null || merged.rent_price_month != null,
-      hasArea: isLand ? merged.plot_area_sqm != null : merged.covered_area_sqm != null,
-      hasBedroomsAndBathrooms: merged.bedrooms != null && merged.bathrooms != null,
-      hasPlanningZoneAndDensity:
-        merged.planning_zone_code != null && merged.building_density_pct != null,
-      // 0054: a centroid stand-in is not an exact location. This mirrors
-      // quality-score.ts exactly; the two must agree or a save and a recompute
-      // produce different scores for the same row.
-      hasCoords: merged.location != null && !merged.location_approx,
-      titleDeedSet: merged.title_deed_status !== "unknown",
-      permitSet: merged.permit_status !== "unknown",
-      mandateActive: (activeMandates ?? []).length > 0,
-      // from `merged`, like every other input here: a parties save in the same
-      // submit must count toward the gate it is trying to clear
-      hasAssignedAgent: merged.assigned_agent_id != null,
-      hasOwnerOrDeveloper:
-        merged.owner_contact_id != null || merged.developer_contact_id != null,
-    });
+    // F03: through buildQualityInput — the ONE definition the stored score,
+    // the worklist, the dashboard and the detail page read. This used to be a
+    // hand-written copy of it (the third, beside the page's), kept in step by
+    // a comment; the page's copy had already drifted. Every column comes from
+    // `merged`, so the fields filled in THIS save — a parties save included —
+    // count toward the gate they are trying to clear, and a column the save
+    // spells as undefined counts as unset (buildQualityInput reads `!= null`).
+    const result = computeQualityScore(
+      buildQualityInput(merged as unknown as QualityScoreSource, {
+        hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
+        photoCount: (media ?? []).length,
+        mandateActive: (activeMandates ?? []).length > 0,
+        unitCount: units.unitCount,
+        pricedUnitCount: units.pricedUnitCount,
+      }),
+    );
     const score = result.score;
     if (score < PUBLISH_THRESHOLD) {
       const wantsOverride = formData.get("publish_override") === "on";

@@ -35,8 +35,9 @@ import {
  *      organisation's listing;
  *   2. setting a cover on that listing answers success, the cover is set and
  *      the stored score is recomputed — no throw after the committed write;
- *   3. no request carries more than a bounded slice of the hashes, and none an
- *      id list;
+ *   3. no request carries more than a bounded slice of the hashes, and none the
+ *      sharing listings' ids as a list (the page's one other id list, its
+ *      Activity feed's authors since A06 step 5, is a bounded slice);
  *   4. with PostgREST's row cap lowered to 50, the answer is still all 215 —
  *      each slice's read pages. (Only here: the page's and the score's own
  *      photo reads are unpaged, so a lowered cap would hide the 414 above by
@@ -87,6 +88,7 @@ import { setMediaCover } from "@/lib/actions/media";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { recomputeQualityScore } from "@/lib/services/quality-score";
+import { IDS_PER_READ } from "@/lib/services/entity-timeline";
 
 // ---------------------------------------------------------------------------
 let client: SupabaseClient;
@@ -291,7 +293,7 @@ describe("the shared-photograph warning names every sharing listing", () => {
     expect(score).toBe(fresh!.score);
   }, 120_000);
 
-  it("no request carries more than a bounded slice of the hashes, and none an id list", async () => {
+  it("no request carries more than a bounded slice of the hashes, nor the sharing listings' ids as a list", async () => {
     const out = await pageWarning(listingId);
     const urls = out.gets.map((u) => decodeURIComponent(u));
     const reads = sharedReads(out.gets);
@@ -303,7 +305,17 @@ describe("the shared-photograph warning names every sharing listing", () => {
     // count the DISTINCT hashes asked about
     const asked = new Set(reads.flatMap((u) => (/content_sha256=in\.\(([^)]*)\)/.exec(u)?.[1] ?? "").split(",").filter(Boolean)));
     expect(asked.size, "every hash asked about").toBe(N_PHOTOS);
-    for (const u of urls) expect(u, "no id list").not.toMatch(/(?:^|[?&])id=in\./);
+    // The sharing listings' ids never travel as a list (2cbd490's second read,
+    // `properties?id=in.(…)`). The page's one other id list is its Activity
+    // feed's authors (A06 step 5: readEntityTimelines names them, read as the
+    // viewer) — the people on at most one feed's lines, a bounded slice.
+    for (const u of urls) {
+      expect(u, "no listing id list").not.toMatch(/\/rest\/v1\/properties\?(?:.*&)?id=in\./);
+      const list = /(?:^|[?&])id=in\.\(([^)]*)\)/.exec(u)?.[1];
+      if (list === undefined) continue;
+      expect(u, "the only other id list is the feed's authors").toMatch(/\/rest\/v1\/profiles\?/);
+      expect(list.split(",").length, "a bounded slice").toBeLessThanOrEqual(IDS_PER_READ);
+    }
     expect(Math.max(...urls.map((u) => u.length)), "every request well under the gateway's 8 KB").toBeLessThan(6000);
   }, 120_000);
 

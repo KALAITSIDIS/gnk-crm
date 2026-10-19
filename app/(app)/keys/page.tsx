@@ -22,6 +22,10 @@ import {
   totalPages as countPages,
 } from "@/lib/validators/pagination";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Keys · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Keys" };
 
 export const dynamic = "force-dynamic";
 

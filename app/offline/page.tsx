@@ -41,7 +41,8 @@ export const dynamic = "force-dynamic";
  * The same fix `T-prod-day` applied to `/login`, `/login/verify` and
  * `/session-clock` on 2026-08-09, for the same reason.
  */
-export const metadata = { title: "Offline — GN Real Estate OS" };
+// "Offline · GN REOS": the root layout's template adds the suffix (A08)
+export const metadata = { title: "Offline" };
 
 export default function OfflinePage() {
   return (

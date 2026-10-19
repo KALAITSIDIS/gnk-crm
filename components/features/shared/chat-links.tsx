@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 /**
  * WhatsApp / Telegram click-to-chat (doc 02 §C4, T2.6). Opening a link logs a
  * chat_link_opened event — the Phase 1 substitute for messaging APIs.
+ *
+ * The CLICK is recorded, not a contact: opening WhatsApp says nothing about a
+ * message being sent (A06). The titles say so — "(logged)" read as a logged
+ * contact, which the strip and the hot-buyers card deliberately do not count.
  */
 export function ChatLinks({
   phoneE164,
@@ -51,7 +55,7 @@ export function ChatLinks({
           size={size}
           className="h-7 text-xs text-success"
           onClick={() => open("whatsapp", `https://wa.me/${waNumber}`)}
-          title="Open WhatsApp chat (logged)"
+          title="Open WhatsApp chat — the click is recorded, not a contact"
         >
           <MessageCircle className="size-3.5" /> WhatsApp
         </Button>
@@ -63,7 +67,7 @@ export function ChatLinks({
           size={size}
           className="h-7 text-xs text-brand-500"
           onClick={() => open("telegram", `https://t.me/${telegramUsername}`)}
-          title="Open Telegram chat (logged)"
+          title="Open Telegram chat — the click is recorded, not a contact"
         >
           <Send className="size-3.5" /> Telegram
         </Button>

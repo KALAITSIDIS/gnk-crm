@@ -20,6 +20,10 @@ import {
 } from "@/lib/queries/contacts-list";
 import { formatDateTime } from "@/lib/utils/format";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Contacts · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Contacts" };
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -32,7 +36,7 @@ const TEMP_TONES: Record<string, string> = {
   warm: "text-warning",
   cold: "text-brand-500",
   inactive: "text-text-3",
-  vip: "text-accent-500",
+  vip: "text-accent-700", // bronze TEXT token: accent-500 measures 3.09:1 on white (A08)
 };
 
 export default async function ContactsPage({

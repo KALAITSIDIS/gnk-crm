@@ -95,7 +95,7 @@ function DaysLeft({ expiresAt }: { expiresAt: string }) {
   const ms = new Date(expiresAt).getTime() - now;
   let text: string;
   if (ms <= 0) {
-    text = "lapsed — the nightly sweep will close it";
+    text = "expired — it closes automatically overnight";
   } else {
     const days = Math.floor(ms / 86_400_000);
     if (days >= 1) {

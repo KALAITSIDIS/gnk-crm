@@ -133,3 +133,65 @@ describe("days on market", () => {
     expect(w.onMarket).toEqual([]);
   });
 });
+
+/**
+ * F03: a public listing on the website without a cover photo, an English
+ * title or a price is named on its own, whatever its score — an 85 with no
+ * picture cleared the threshold and was called healthy.
+ */
+describe("public without website essentials (F03)", () => {
+  const noPhoto: Partial<QualityScoreInput> = { hasCoverPhoto: false, photoCount: 0 };
+
+  it("lists a public, available listing with no cover photo even though it clears the threshold", () => {
+    const w = buildWorklist([scored("PAF0004", publicFor(30), noPhoto), scored("PAF0001", publicFor(30))], NOW);
+    expect(w.publicMissingEssentials).toEqual([
+      {
+        property: { id: "id-PAF0004", reference: "PAF0004", title: null, score: 85 },
+        missing: [{ key: "cover", label: "Cover photo" }],
+      },
+    ]);
+    // it is NOT below the threshold: the two statements are different facts
+    expect(w.belowThreshold).toEqual([]);
+  });
+
+  it("names every essential each listing lacks, listings by reference", () => {
+    const w = buildWorklist(
+      [
+        scored("PAF0009", publicFor(1), { ...noPhoto, hasPrice: false }),
+        scored("PAF0003", publicFor(1), { titleEn: "  " }),
+      ],
+      NOW,
+    );
+    expect(w.publicMissingEssentials.map((e) => [e.property.reference, e.missing.map((m) => m.key)])).toEqual([
+      ["PAF0003", ["title_en"]],
+      ["PAF0009", ["cover", "price"]],
+    ]);
+  });
+
+  it("ignores private, draft and public-but-reserved listings — the website does not show them", () => {
+    const w = buildWorklist(
+      [
+        scored("PRIVATE", { visibility: "private", status: "available", publishedAt: null }, noPhoto),
+        scored("DRAFT", { visibility: "public", status: "draft", publishedAt: null }, noPhoto),
+        scored("RESERVED", { visibility: "public", status: "reserved", publishedAt: null }, noPhoto),
+        scored("SOON", { visibility: "coming_soon", status: "available", publishedAt: null }, noPhoto),
+      ],
+      NOW,
+    );
+    expect(w.publicMissingEssentials).toEqual([]);
+    expect(w.publicCount).toBe(0);
+  });
+
+  it("counts every public, available listing, stamped or not", () => {
+    const w = buildWorklist(
+      [
+        scored("STAMPED", publicFor(4)),
+        scored("UNSTAMPED", { visibility: "public", status: "available", publishedAt: null }),
+        scored("PRIVATE", { visibility: "private", status: "available", publishedAt: null }),
+      ],
+      NOW,
+    );
+    expect(w.publicCount).toBe(2);
+    expect(w.onMarket).toHaveLength(1);
+  });
+});

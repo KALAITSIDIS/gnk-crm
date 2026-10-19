@@ -1,4 +1,8 @@
 import { CreateContactForm } from "@/components/features/contacts/create-form";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "New contact · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "New contact" };
 
 export default function NewContactPage() {
   return (

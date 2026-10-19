@@ -78,7 +78,7 @@ const REVIEWED: Record<string, Record<string, string>> = {
     "payload: overrideToLog": "declared `{ score: number; threshold: number } | null`",
   },
   "tasks.ts": {
-    "...link": "declared `{ property_id?; contact_id?; deal_id? }` — ids only",
+    "...link": "declared `TaskLink` — `{ property_id?; contact_id?; deal_id?; viewing_id?; lead_id? }`, ids only",
   },
   "unit-inheritance.ts": {
     "[column]": "the name of the unit column whose inheritance changed, never a client's field",
@@ -291,4 +291,22 @@ describe("event payloads written by actions", () => {
     });
     expect(stale).toEqual([]);
   });
+});
+
+/*
+ * A service that writes an event FOR an action is scanned the same way: the
+ * payload left lib/actions, the rule did not. `requirement-from-brief.ts` is
+ * the body createContactFromEnquiry and saveSearchFromEnquiry share (A04).
+ */
+const SERVICE_EVENT_WRITERS = ["requirement-from-brief.ts"];
+
+describe("event payloads written by services on an action's behalf", () => {
+  for (const file of SERVICE_EVENT_WRITERS) {
+    it(`lib/services/${file} carries no client identifier or free text by value`, () => {
+      const src = readFileSync(join(root, "lib", "services", file), "utf-8");
+      expect(src, "it still writes an event — otherwise drop it from this list").toMatch(/\bpayload:\s*\{/);
+      const offenders = scanPayloads(src, file).map((f) => `${file}:${f.line} ${f.text} — ${f.why}`);
+      expect(offenders, `${file} writes a client's data into the chain`).toEqual([]);
+    });
+  }
 });

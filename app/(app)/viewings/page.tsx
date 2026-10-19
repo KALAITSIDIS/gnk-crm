@@ -20,6 +20,10 @@ import {
 } from "@/lib/services/calendar-window";
 import type { ViewingStatus } from "@/lib/validators/viewings";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Viewings · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Viewings" };
 
 export const dynamic = "force-dynamic";
 

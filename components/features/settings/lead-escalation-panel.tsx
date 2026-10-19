@@ -171,7 +171,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
         The desk alert already says an enquiry <em>arrived</em>; this says it is still <em>waiting</em>.
         It goes once per enquiry to the people ticked below — never to the person the lead is assigned
         to, who already has the alert and the task. The check runs every five minutes and the e-mail
-        leaves with the next alert sweep, so expect the wait plus up to seven minutes, not the minute
+        goes out within two minutes of it, so expect the wait plus up to seven minutes, not the minute
         itself.
       </p>
 
@@ -221,7 +221,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
               <p className="text-xs text-text-3">
                 Counted in working time when hours are set. {ESCALATION_FORM_BOUNDS.after_minutes.min}–
                 {ESCALATION_FORM_BOUNDS.after_minutes.max} here
-                {outsideWait ? ` (the row currently holds ${value.after_minutes}, set outside this form — the sweep uses it)` : ""}.
+                {outsideWait ? ` (the stored value is ${value.after_minutes} minutes, changed outside this form — the check uses it)` : ""}.
               </p>
             </div>
             <div className="flex flex-col gap-1">
@@ -240,7 +240,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
               <p className="text-xs text-text-3">
                 Counted from the moment the wait ended, so closed days do not count against an enquiry. Keeps switching
                 this on from e-mailing about every stale enquiry — those have their tasks
-                {outsideAge ? ` (the row currently holds ${value.max_age_hours}, set outside this form)` : ""}.
+                {outsideAge ? ` (the stored value is ${value.max_age_hours} hours, changed outside this form — the check uses it)` : ""}.
               </p>
             </div>
           </div>
@@ -271,7 +271,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
             ))}
             {inactive.map((m) => (
               <li key={m.id} className="text-xs text-text-3">
-                {m.full_name} is in the policy but inactive — the sweep skips them; saving drops them.
+                {m.full_name} was chosen but is now inactive — the check skips them, and saving removes them.
               </li>
             ))}
           </ul>
@@ -336,8 +336,8 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
             {previewing ? "Previewing…" : "Preview activation"}
           </Button>
           <p className="text-xs text-text-3">
-            Every save is an event. Sending also needs the provider set up with a sender it accepts — the preview says what this
-            deployment&rsquo;s sender can do.
+            Every save is recorded in the event log. Sending also needs the e-mail service set up with a sender address it
+            accepts — the preview says whether it is.
           </p>
         </div>
       </form>

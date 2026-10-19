@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { retryEnquiryAlert } from "@/lib/actions/leads";
 import { deskAlertStatus, type DeskAlertJob, type DeskAlertTone } from "@/lib/services/enquiry-alert-status";
 import { Button } from "@/components/ui/button";
+import { TechnicalDetails } from "@/components/features/shared/technical-details";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,10 +32,12 @@ export function DeskAlertChip({ leadId, job }: { leadId: string; job: DeskAlertJ
   const retry = () =>
     startTransition(async () => {
       try {
-        await retryEnquiryAlert(leadId);
-        toast.success("Desk alert queued — sending now");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not retry the alert");
+        // the database's refusal comes back as an answer — a thrown message is redacted by Next
+        const { error } = await retryEnquiryAlert(leadId);
+        if (error) toast.error(error);
+        else toast.success("Desk alert queued — sending now");
+      } catch {
+        toast.error("Could not retry the alert — reload the page and try again.");
       }
     });
 
@@ -56,6 +59,8 @@ export function DeskAlertChip({ leadId, job }: { leadId: string; job: DeskAlertJ
           <BellRing className="size-3" /> {pending ? "Retrying…" : "Retry alert"}
         </Button>
       ) : null}
+      {/* the outbox's codes and counters, out of the sentence (A08) */}
+      {status.detail ? <TechnicalDetails>{status.detail}</TechnicalDetails> : null}
     </span>
   );
 }

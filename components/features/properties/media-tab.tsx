@@ -293,7 +293,7 @@ export function MediaTab({
                   {item.is_cover ? (
                     <span
                       className={cn(
-                        "absolute top-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-medium text-white",
+                        "absolute top-2 rounded-full bg-accent-700 px-2 py-0.5 text-xs font-medium text-white",
                         canManage ? "left-11" : "left-2",
                       )}
                     >

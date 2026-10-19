@@ -109,7 +109,7 @@ Calendar (week/day) + list; create viewing: property, contact, agent, datetime, 
 
 Per property legal panel: title deed status, permit status, share of land, encumbrances notes — changes are events. Calculators page + embedded on property/deal:
 
-- **Transfer fees:** DLS bands from `cyprus_config` (3% ≤ €85k, 5% ≤ €170k, 8% above), apply 50% relief toggle (default on), and **zero when VAT was paid** toggle. Show band breakdown.
+- **Transfer fees:** DLS bands from `cyprus_config` (3% ≤ €85k, 5% ≤ €170k, 8% above), apply 50% relief toggle (default on), and a **VAT scenario** choice — Not subject to VAT (the default on a bare page) / Subject to VAT (no transfer fees) / Not confirmed (both branches shown). When opened from a property (`?property=`), it starts on the scenario the property's stored vat_status implies. Show band breakdown.
 - **Stamp duty:** 0 ≤ €5k, 0.15% ≤ €170k, 0.20% above, cap €20,000.
 - Output: on-screen breakdown + "copy summary" text (EN/RU/GR strings from messages).
 Every calculator displays: *"Rates from config, last verified {verified_at} — verify current legislation."*
@@ -121,7 +121,7 @@ Every calculator displays: *"Rates from config, last verified {verified_at} — 
 Visibility select on property: public · private · vip · partner · off_market · coming_soon · archived (public gated by score, §C1). Phase 1 note: "public" only marks readiness — no public site yet.
 
 **Admin dashboard:** pipeline value by stage, deals won this month, new leads today/week + avg first-response, listings by status, mandates expiring ≤30 days, top agents by activity events.
-**Agent dashboard (mobile-first):** today's viewings, overdue tasks, hot buyers (temperature=hot with no activity 3+ days), my new leads with clocks, quick actions.
+**Agent dashboard (mobile-first):** today's viewings, overdue tasks, hot buyers (temperature=hot with no logged contact 3+ days), my new leads with clocks, quick actions.
 
 **Settings:** org profile, users (invite, role, deactivate), deal stages editor (rename/reorder/add per type), districts & areas, Cyprus config editor (admin only, edits are events), watermark upload.
 

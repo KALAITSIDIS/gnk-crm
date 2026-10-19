@@ -8,6 +8,10 @@ import { describe, expect, it, vi } from "vitest";
  * stack). This file pins what the action does around that decision: it asks
  * through the caller's own session, surfaces the function's words and nothing
  * else, and kicks the worker for THAT lead once the row is pending again.
+ *
+ * Every refusal is RETURNED as `{ error }`, never thrown: Next replaces a
+ * thrown error's message in production, so the desk read a generic failure
+ * instead of the database's sentence.
  */
 const state = vi.hoisted(() => ({
   rpc: vi.fn<(name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>>(),
@@ -46,7 +50,7 @@ describe("retryEnquiryAlert", () => {
   it("asks the database through the caller's session, then sends at once for that lead", async () => {
     reset();
     state.rpc.mockResolvedValue({ data: [{ id: "job-7", lead_id: LEAD, state: "pending" }], error: null });
-    await expect(retryEnquiryAlert(LEAD)).resolves.toBeUndefined();
+    await expect(retryEnquiryAlert(LEAD)).resolves.toEqual({ error: null });
     expect(state.rpc).toHaveBeenCalledWith("request_enquiry_alert_retry", { p_lead_id: LEAD });
     expect(state.afters, "the send is scheduled after the answer, like the route's").toHaveLength(1);
     await state.afters[0]!();
@@ -70,7 +74,9 @@ describe("retryEnquiryAlert", () => {
       data: null,
       error: { code: "P0001", message: "The alert is being sent right now — try again in a minute." },
     });
-    await expect(retryEnquiryAlert(LEAD)).rejects.toThrow(/being sent right now/);
+    await expect(retryEnquiryAlert(LEAD)).resolves.toEqual({
+      error: "The alert is being sent right now — try again in a minute.",
+    });
     expect(state.afters).toHaveLength(0);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -81,15 +87,16 @@ describe("retryEnquiryAlert", () => {
       data: null,
       error: { code: "42P01", message: 'relation "notification_jobs" does not exist' },
     });
-    await expect(retryEnquiryAlert(LEAD)).rejects.toThrow(/could not queue/i);
-    await expect(retryEnquiryAlert(LEAD)).rejects.not.toThrow(/notification_jobs/);
+    const answer = await retryEnquiryAlert(LEAD);
+    expect(answer.error).toMatch(/could not queue/i);
+    expect(answer.error).not.toMatch(/notification_jobs/);
     expect(state.afters).toHaveLength(0);
   });
 
   it("treats no row back as no job, not as success", async () => {
     reset();
     state.rpc.mockResolvedValue({ data: [], error: null });
-    await expect(retryEnquiryAlert(LEAD)).rejects.toThrow(/no desk alert/i);
+    expect((await retryEnquiryAlert(LEAD)).error).toMatch(/no desk alert/i);
     expect(state.afters).toHaveLength(0);
   });
 });

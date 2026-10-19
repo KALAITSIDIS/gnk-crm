@@ -9,6 +9,10 @@ import { createClient } from "@/lib/supabase/server";
 import { isGuid } from "@/lib/validators/ids";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Sign viewing slip · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "Sign viewing slip" };
 
 export const dynamic = "force-dynamic";
 // Bounds signViewingSlip, which this page runs: slip files older than five
