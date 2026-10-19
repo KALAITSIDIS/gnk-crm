@@ -114,7 +114,11 @@ test("a public listing with no photograph is said to be on the website without o
     const health = page.getByRole("region", { name: /^Listing health/ });
     await expect(health).toHaveAttribute("data-listing-health", "attention");
     await expect(health.locator('[data-line="essentials"]')).toContainText(`${listing.reference} (cover photo)`);
-    await expect(health.locator('[data-line="completeness"]')).toContainText("score 70 or more");
+    // the count is the org's public listings — this one at least — and the verb
+    // agrees with it: "the 1 public listing scores", "all N public listings score"
+    await expect(health.locator('[data-line="completeness"]')).toHaveText(
+      /^Completeness: (?:the 1 public listing scores|all (?:[2-9]|\d{2,}) public listings score) 70 or more\.$/,
+    );
 
     // 3. the worklist lists it first, under its own heading
     await page.goto("/properties/worklist", { waitUntil: "networkidle" });

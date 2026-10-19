@@ -54,8 +54,22 @@ async function tabTo(page: Page, target: Locator, max = 80): Promise<void> {
   throw new Error(`Tab never reached the target in ${max} presses`);
 }
 
+/**
+ * The focus style the element SETTLES on — what is on screen for as long as it
+ * holds focus. The nav and settings links carry `transition-colors`, and
+ * Tailwind v4's list includes `outline-color`: on focus the outline fades from
+ * the `* { outline-ring/50 }` colour to its focus colour over 150 ms, so a read
+ * taken on the frame of the Tab press is a mid-fade mix (measured 2026-10-19:
+ * oklab(… / 0.52) one frame in, rgb(255, 255, 255) once settled). It waits for
+ * the element's running transitions, but no longer than FADE_CAP_MS — a fade
+ * slower than that is read mid-way and fails the colour check.
+ */
+const FADE_CAP_MS = 300;
+
 async function focusStyle(target: Locator) {
-  return target.evaluate((el) => {
+  return target.evaluate(async (el, capMs) => {
+    const settled = Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
+    await Promise.race([settled, new Promise((resolve) => setTimeout(resolve, capMs))]);
     const s = getComputedStyle(el);
     return {
       focusVisible: el.matches(":focus-visible"),
@@ -64,7 +78,7 @@ async function focusStyle(target: Locator) {
       outlineColor: s.outlineColor,
       boxShadow: s.boxShadow,
     };
-  });
+  }, FADE_CAP_MS);
 }
 
 /**

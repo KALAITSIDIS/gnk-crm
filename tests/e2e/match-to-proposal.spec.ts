@@ -188,8 +188,9 @@ test("ticked matches become ONE proposal bound to the buyer; Proposed shows on b
     await expect(pick(REFS.a)).toBeVisible({ timeout: opTimeout(15_000) });
     // nothing is pre-ticked: a proposal is a deliberate shortlist
     for (const ref of [REFS.a, REFS.b, REFS.c]) await expect(pick(ref)).not.toBeChecked();
-    // the off-market listing is marked on its row
-    await expect(page.getByRole("listitem").filter({ hasText: TITLES.c }).getByText("Off-market")).toBeVisible();
+    // the off-market listing is marked on its row — the chip, exactly: the row's
+    // title link ("E2E off-market villa …") contains the word too
+    await expect(page.getByRole("listitem").filter({ hasText: TITLES.c }).getByText("Off-market", { exact: true })).toBeVisible();
 
     // ---------- off-market asks first ----------
     await pick(REFS.c).check();

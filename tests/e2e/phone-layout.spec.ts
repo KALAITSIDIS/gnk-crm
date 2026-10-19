@@ -51,26 +51,63 @@ test.describe("phone layouts (CRM-06)", () => {
    * screen. The columns now appear by priority in a fixed layout; at a small
    * laptop's width the table fits its container with nothing to scroll —
    * measured on the table's own scroller, not only the page.
+   *
+   * The land table (Plot m² and Density in place of Area and Beds) needs a
+   * land listing to draw a row at all, and the seed database has none — the
+   * empty state has no table, so nothing was measured. Locally the test plants
+   * one plot with every land figure and a long title (the cells that could
+   * widen the table) and deletes it; elsewhere it measures the land on file.
    */
   test("the properties table fits a 1024 px window without a sideways scroll", async ({ page }, testInfo) => {
     test.skip(isPhone(testInfo.project.use.viewport?.width ?? 1280), "desktop widths");
-    // 1536: Score and Visibility join as columns there (A03 review) and must fit too
-    for (const width of [1024, 1280, 1536]) {
-      await page.setViewportSize({ width, height: 800 });
-      for (const path of ["/properties?view=table", "/properties?view=table&type=land"]) {
-        await page.goto(path, { waitUntil: "networkidle" });
-        await expect(page.getByRole("table").first()).toBeVisible();
-        const scrollers = await page.evaluate(() =>
-          [...document.querySelectorAll('main [data-slot="table-container"]')].map((el) => ({
-            scroll: el.scrollWidth,
-            client: el.clientWidth,
-          })),
-        );
-        expect(scrollers.length, `${path} at ${width}px: a table`).toBeGreaterThan(0);
-        for (const s of scrollers) {
-          expect(s.scroll - s.client, `${path} at ${width}px: the table scrolls sideways (${s.scroll} in ${s.client})`).toBeLessThanOrEqual(1);
+    let plotId: string | null = null;
+    const svc = isLocal() ? serviceClient() : null;
+    if (svc) {
+      const { orgId } = await fixtureProfile(svc);
+      const { data, error } = await svc
+        .from("properties")
+        .insert({
+          org_id: orgId,
+          reference: `E2E-PLOT-${runTag().slice(-6)}`,
+          property_type: "land",
+          transaction_type: "sale",
+          status: "available",
+          visibility: "private",
+          title: { en: "Phone layout plot with a long title that has to truncate in its cell" },
+          plot_area_sqm: 125000,
+          building_density_pct: 120,
+          asking_price: 12500000,
+        })
+        .select("id")
+        .single();
+      expect(error, `seeding a land listing: ${error?.message}`).toBeNull();
+      plotId = data!.id as string;
+    }
+    try {
+      // 1536: Score and Visibility join as columns there (A03 review) and must fit too
+      for (const width of [1024, 1280, 1536]) {
+        await page.setViewportSize({ width, height: 800 });
+        for (const path of ["/properties?view=table", "/properties?view=table&type=land"]) {
+          await page.goto(path, { waitUntil: "networkidle" });
+          await expect(page.getByRole("table").first()).toBeVisible();
+          const scrollers = await page.evaluate(() =>
+            [...document.querySelectorAll('main [data-slot="table-container"]')].map((el) => ({
+              scroll: el.scrollWidth,
+              client: el.clientWidth,
+            })),
+          );
+          expect(scrollers.length, `${path} at ${width}px: a table`).toBeGreaterThan(0);
+          for (const s of scrollers) {
+            expect(s.scroll - s.client, `${path} at ${width}px: the table scrolls sideways (${s.scroll} in ${s.client})`).toBeLessThanOrEqual(1);
+          }
+          await assertNoHorizontalOverflow(page, `${path} at ${width}px`);
         }
-        await assertNoHorizontalOverflow(page, `${path} at ${width}px`);
+      }
+    } finally {
+      if (svc && plotId) {
+        const removed = await svc.from("properties").delete({ count: "exact" }).eq("id", plotId);
+        expect(removed.error, `fixture delete: ${removed.error?.message}`).toBeNull();
+        expect(removed.count, "the fixture plot is gone").toBe(1);
       }
     }
   });

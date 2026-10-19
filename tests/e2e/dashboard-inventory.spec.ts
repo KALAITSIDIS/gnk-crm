@@ -62,11 +62,14 @@ test.describe("dashboard: the Inventory card (F04-C)", () => {
       .select("id")
       .single();
     expect(error).toBeNull();
+    // EVERY row names the same columns: a bulk insert sends the union of the
+    // rows' keys, and a key one row lacks goes as NULL, not the column default
+    // (`visibility` is NOT NULL DEFAULT 'private' — 23502 when only U3 set it).
     const { error: rowsErr } = await svc.from("properties").insert([
-      { org_id: orgId, reference: `${PREFIX}U1${tag}`, property_type: "apartment", kind: "unit", parent_id: project!.id, status: "available" },
-      { org_id: orgId, reference: `${PREFIX}U2${tag}`, property_type: "apartment", kind: "unit", parent_id: project!.id, status: "available" },
+      { org_id: orgId, reference: `${PREFIX}U1${tag}`, property_type: "apartment", kind: "unit", parent_id: project!.id, status: "available", visibility: "private" },
+      { org_id: orgId, reference: `${PREFIX}U2${tag}`, property_type: "apartment", kind: "unit", parent_id: project!.id, status: "available", visibility: "private" },
       { org_id: orgId, reference: `${PREFIX}U3${tag}`, property_type: "apartment", kind: "unit", parent_id: project!.id, status: "available", visibility: "archived" },
-      { org_id: orgId, reference: `${PREFIX}S${tag}`, property_type: "apartment", kind: "standalone", status: "withdrawn" },
+      { org_id: orgId, reference: `${PREFIX}S${tag}`, property_type: "apartment", kind: "standalone", parent_id: null, status: "withdrawn", visibility: "private" },
     ]);
     expect(rowsErr).toBeNull();
   });

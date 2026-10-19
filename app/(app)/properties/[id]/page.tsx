@@ -767,7 +767,7 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="overview" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2" data-testid="property-overview-facts">
               {overviewFacts.map(([label, value]) => (
                 <div
                   key={label}

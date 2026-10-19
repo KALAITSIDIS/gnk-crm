@@ -137,7 +137,10 @@ test("unknown land: the panel frames a scenario, and the calculator opens on it"
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await transferCard(page).getByRole("button", { name: /copy summary/i }).click();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip.split("\n")[0]).toBe(`Transfer fees for €200.000 — ${REF.land}:`);
+    // The summary joins its lines with "\n" (buildTransferSummary); the Windows
+    // clipboard stores text with CRLF and reads it back that way, so a line
+    // ends at \r?\n here
+    expect(clip.split(/\r?\n/)[0]).toBe(`Transfer fees for €200.000 — ${REF.land}:`);
     expect(clip).toContain("Scenario: VAT status not confirmed — confirm before quoting");
     expect(clip).toContain("If subject to VAT: no transfer fees.");
     expect(clip).toContain("Total (if not subject to VAT): €4.600");

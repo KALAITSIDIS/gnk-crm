@@ -176,6 +176,11 @@
    * Both `:where()`s keep this at one pseudo-class of specificity, so the
    * navy rule below wins without depending on source order.
    * tests/unit/palette-parity.test.ts measures both colours.
+   *
+   * A link with `transition-colors` FADES this outline in: Tailwind v4's list
+   * includes outline-color, so for 150 ms the computed colour is a mix of the
+   * `*` rule's ring/50 and the focus colour. That is not this rule losing —
+   * read the colour once the transition ends (tests/e2e/shell-navigation.spec.ts).
    */
   :where(a[href], button, summary, input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"])):where(:not([role="tab"])):focus-visible {
     outline: 2px solid var(--ring);

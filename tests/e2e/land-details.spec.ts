@@ -155,7 +155,9 @@ test("a plot opens on its planning, and a density change leaves everything else 
 
     // the Overview: the plot and its planning terms, not bedrooms
     await page.goto(`/properties/${plot.id}`, { waitUntil: "networkidle" });
-    const overview = page.locator("dl").first();
+    // the Overview tab's facts, by name: the A08 summary strip above the tabs
+    // is a <dl> too, and now the page's first
+    const overview = page.getByTestId("property-overview-facts");
     await expect(overview).toContainText("Planning");
     await expect(overview).toContainText("Κα6 · density 55% · coverage 35%");
     await expect(overview).toContainText("Road frontage");
