@@ -10,6 +10,7 @@ import {
   taskTarget,
   type TaskLinks,
 } from "./task-target";
+import { isPropertyTab, PROPERTY_TABS } from "./property-tabs";
 
 /**
  * taskTarget / leadTarget (A01): every reminder opens the page where the thing
@@ -191,10 +192,12 @@ describe("TASK_KINDS stays in step with the database and the labels", () => {
   });
 
   it("opens only tabs the property page knows", () => {
+    // The one list of tabs is lib/services/property-tabs.ts (F03) — and the
+    // page must render a trigger for each of them, or a link would name a tab
+    // that opens nothing.
     const page = readFileSync(join(root, "app", "(app)", "properties", "[id]", "page.tsx"), "utf-8");
-    const block = page.match(/const PROPERTY_TABS = \[([\s\S]*?)\] as const/);
-    expect(block, "PROPERTY_TABS not found — update this test's reader").not.toBeNull();
-    const tabs = [...block![1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    const triggers = new Set([...page.matchAll(/data-property-tab="([a-z]+)"/g)].map((m) => m[1]));
+    expect([...triggers].sort(), "the page renders a trigger for every tab").toEqual([...PROPERTY_TABS].sort());
     const used = new Set<string>();
     for (const kind of TASK_KINDS) {
       const href = taskTarget(
@@ -204,6 +207,6 @@ describe("TASK_KINDS stays in step with the database and the labels", () => {
       if (tab) used.add(tab);
     }
     expect(used.size).toBeGreaterThan(0);
-    for (const tab of used) expect(tabs, tab).toContain(tab);
+    for (const tab of used) expect(isPropertyTab(tab), tab).toBe(true);
   });
 });

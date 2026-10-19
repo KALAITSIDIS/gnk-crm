@@ -38,9 +38,12 @@ export function PropertyTabs({
   initialTab: PropertyTab;
   children: ReactNode;
 }) {
+  // Both hooks answer null outside the app router (a unit render, a page
+  // rendered by hand): the tab is then the server's reading, and a click
+  // writes against the live location.
   const pathname = usePathname();
   const params = useSearchParams();
-  const fromUrl = params.get("tab");
+  const fromUrl = params?.get("tab") ?? null;
   const value: PropertyTab = isPropertyTab(fromUrl) ? fromUrl : initialTab;
 
   const select = (next: PropertyTab) => {
@@ -50,7 +53,7 @@ export function PropertyTabs({
     // passes a call whose data carries its own `__NA` marker straight
     // through WITHOUT syncing useSearchParams — the tab would not move.
     // Given null, it copies its state in itself and syncs.
-    window.history.replaceState(null, "", `${pathname}?${query.toString()}`);
+    window.history.replaceState(null, "", `${pathname ?? window.location.pathname}?${query.toString()}`);
   };
 
   return (

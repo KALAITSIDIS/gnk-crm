@@ -20,7 +20,7 @@
  * widening would leak `commission_pct` out of `mandates_safe`, because
  * lib/actions/mandates.ts builds its `updated` payload from the changed columns.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ORG_A, createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 
 const svc = serviceClient();
@@ -28,12 +28,16 @@ const run = Date.now().toString(36);
 
 let agent: TestUser;
 let colleague: TestUser;
+let admin: TestUser;
 let contactId: string;
 
 beforeAll(async () => {
   await ensureTestOrg(svc, ORG_A, "Test Org A", "test-org-a");
   agent = await createTestUser(svc, `tl-agent-${run}@test.local`, "agent", ORG_A);
   colleague = await createTestUser(svc, `tl-colleague-${run}@test.local`, "agent", ORG_A);
+  // its OWN admin: the file used to assume another file had left one in ORG_A,
+  // and on a fresh stack run alone there was none
+  admin = await createTestUser(svc, `tl-admin-${run}@test.local`, "admin", ORG_A);
 
   const { data: c, error: cErr } = await svc
     .from("contacts")
@@ -73,6 +77,11 @@ beforeAll(async () => {
     },
   ]);
   if (evErr) throw new Error(`seed events: ${evErr.message}`);
+});
+
+afterAll(async () => {
+  // this file's admin only (its profile cascades); ORG_A is shared, so nothing org-wide
+  if (admin) await svc.auth.admin.deleteUser(admin.id);
 });
 
 describe("a record's history, and who can see it", () => {
@@ -116,16 +125,18 @@ describe("a record's history, and who can see it", () => {
   });
 
   it("an admin sees all three on their own client, which is why this went unnoticed", async () => {
-    const { data: adminProfile } = await svc
-      .from("profiles")
-      .select("id")
-      .eq("org_id", ORG_A)
-      .eq("role", "admin")
-      .limit(1)
-      .maybeSingle();
-    expect(adminProfile, "the fixture org has an admin").not.toBeNull();
     // The seed admin's client is the one every e2e test uses, so every timeline
-    // assertion in the suite has only ever exercised the path that works.
+    // assertion in the suite had only ever exercised the path that works.
+    const { data, error } = await admin.client
+      .from("events")
+      .select("event_type")
+      .eq("entity_type", "contact")
+      .eq("entity_id", contactId);
+    expect(error).toBeNull();
+    expect(
+      (data ?? []).map((e) => e.event_type).sort(),
+      "an admin's own client reads the colleague's edit and the system's event too",
+    ).toEqual(["created", "superseded", "updated"]);
   });
 
   it("the policy still refuses another org's events, service role aside", async () => {
