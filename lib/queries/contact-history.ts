@@ -33,8 +33,12 @@ export interface ContactHistoryIds {
 
 type IdPage = { data: { id: string }[] | null; error: PostgrestError | null; status?: number };
 
-/** One paged id read; unwrapRows inside, so a hollow answer or a clock rejection is never "the end". */
-async function allIds(label: string, page: (from: number, to: number) => PromiseLike<IdPage>): Promise<string[]> {
+/**
+ * One paged id read; unwrapRows inside, so a hollow answer or a clock rejection
+ * is never "the end". Shared with lib/queries/record-viewing-ids.ts, which reads
+ * a property's or a deal's viewings for their Activity feeds the same way.
+ */
+export async function allIds(label: string, page: (from: number, to: number) => PromiseLike<IdPage>): Promise<string[]> {
   const rows = await fetchAll(async (from, to) => ({ data: unwrapRows(await page(from, to), label), error: null }), label);
   // The pages are separate snapshots: a row inserted between two of them
   // shifts the next page, which repeats an id already read. Each counts once.

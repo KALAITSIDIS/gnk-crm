@@ -7,6 +7,10 @@ import { MyDay } from "@/components/features/dashboard/my-day";
 import { TeamCards } from "@/components/features/dashboard/team-cards";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Dashboard · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Dashboard" };
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +38,10 @@ export default async function DashboardPage() {
         <>
           {/* admin-branch only: cron_health() is service_role-gated (0074) */}
           <CronHealth />
-          {/* audit 2026-09-15 LST-03: published_below_threshold() finally has a screen */}
+          {/* audit 2026-09-15 LST-03, F03: Listing health reads the same fresh
+              worklist computation /properties/worklist renders
+              (fetchQualityWorklist). published_below_threshold() (0066) has
+              no app reader any more — it stays in SQL as a cross-check only. */}
           <ListingHealth />
           <section aria-labelledby="dashboard-my-day" className="flex flex-col gap-3">
             <h2 id="dashboard-my-day" className="text-base font-semibold text-text-1">

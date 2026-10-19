@@ -16,6 +16,14 @@ import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { ViewingFeedback, ViewingStatus } from "@/lib/validators/viewings";
 import { confirmationFreshness } from "@/lib/services/viewing-confirmation-freshness";
+import type { Metadata } from "next";
+
+/**
+ * The browser tab's name (A08): the generic word only — never the record's
+ * name or a person's, because tab titles land in browser history on shared
+ * devices. Static on purpose: no generateMetadata here (tests/unit/page-titles.test.ts).
+ */
+export const metadata: Metadata = { title: "Viewing" };
 
 export const dynamic = "force-dynamic";
 

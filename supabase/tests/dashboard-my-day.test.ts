@@ -272,7 +272,7 @@ const event = (org: string, entityType: string, eventType: string, actor: string
   );
 
 beforeAll(async () => {
-  // the hot-buyers card's last-touched read runs on the service-role client
+  // the hot-buyers card's logged-contact read runs on the service-role client
   process.env.NEXT_PUBLIC_SUPABASE_URL ??= SUPABASE_URL;
   process.env.SUPABASE_SERVICE_ROLE_KEY ??= SERVICE_ROLE_KEY;
 

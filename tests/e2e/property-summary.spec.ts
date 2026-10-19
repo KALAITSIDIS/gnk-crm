@@ -90,8 +90,9 @@ test("the summary strip: price, availability, owner, agent, next task, mandate a
   try {
     await page.goto(`/properties/${listing.id}`, { waitUntil: "networkidle" });
 
-    // the tab title: the reference, and nothing a shared device should keep in its history
-    await expect(page).toHaveTitle(new RegExp(`^${listing.reference}(\\s|$)`));
+    // the tab title: the reference, and nothing a shared device should keep in its
+    // history — then the root layout's suffix, once (A08)
+    await expect(page).toHaveTitle(`${listing.reference} · GN REOS`);
     const tabTitle = await page.title();
     expect(tabTitle).not.toContain(listing.title);
     expect(tabTitle).not.toContain(listing.ownerName);

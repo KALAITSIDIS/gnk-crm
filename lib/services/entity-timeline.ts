@@ -277,7 +277,8 @@ export const CUSTOMER_FEED_SKIPPED_TYPES = ["enquiry_alert", "lead_escalation"] 
 
 /**
  * Several records' histories as ONE feed: a contact with its leads, deals and
- * viewings; a deal with its offers; a property with its keys and viewings.
+ * viewings; a deal with its offers and viewings; a property with its keys and
+ * viewings.
  *
  * Each source is read exactly as `readEntityTimeline` reads one — as the
  * system, org-bound, with the notes join and every redaction — so the same
@@ -571,65 +572,6 @@ function redactSlipSigners(rows: TimelineRow[], viewerRole: string): TimelineRow
     for (const [k, v] of Object.entries(payload)) if (!SLIP_NAME_KEYS.has(k)) rest[k] = v;
     return { ...r, payload: rest as TimelineRow["payload"] };
   });
-}
-
-
-/**
- * When each of these records was last touched by ANYONE.
- *
- * A separate function from `readEntityTimeline`, not a flag on it, because it
- * is a different question and wants a different shape: two columns over up to
- * several hundred rows, where a timeline wants whole events over a few dozen.
- * Pulling `payload` for 500 rows to compute a max(occurred_at) would be a
- * needless read of every jsonb blob on the page an agent opens most.
- *
- * WHY IT MATTERS THAT IT ASKS THE SYSTEM. The agent dashboard's "idle" list is
- * "no event, or the last one is older than three days". On the caller's client
- * that became "no event OF MINE" — so a contact a colleague called yesterday
- * still read as untouched, and the desk's own tool told an agent to ring a
- * buyer who had just been rung. For a CRM that is the failure the product
- * exists to prevent.
- *
- * Same contract as its neighbour: `entityIds` must be ids the CALLER already
- * read through RLS, and `orgId` is filtered explicitly.
- */
-export async function readLastTouched(opts: {
-  orgId: string;
-  entityType: string;
-  entityIds: readonly string[];
-  /** how many recent rows to sample; the caller reduces them to a max per id */
-  limit: number;
-}): Promise<{ entity_id: string | null; occurred_at: string }[]> {
-  if (opts.entityIds.length === 0) return [];
-  /*
-   * An org is REQUIRED, and refusing here rather than trusting callers is the
-   * point: on a service-role client `org_id` is the only boundary there is, and
-   * a caller that derived it from an empty array would pass "" without
-   * noticing. Loudly nothing, never quietly everything.
-   */
-  if (!opts.orgId) {
-    console.error("timeline read refused: no org", { entityType: opts.entityType });
-    return [];
-  }
-
-  const { data, error } = await createAdminClient()
-    .from("events")
-    .select("entity_id, occurred_at")
-    .eq("org_id", opts.orgId)
-    .eq("entity_type", opts.entityType)
-    .in("entity_id", opts.entityIds as string[])
-    .order("occurred_at", { ascending: false })
-    .limit(opts.limit);
-
-  if (error) {
-    console.error("last-touched read failed:", {
-      entityType: opts.entityType,
-      count: opts.entityIds.length,
-      error: error.message,
-    });
-    return [];
-  }
-  return (data ?? []) as { entity_id: string | null; occurred_at: string }[];
 }
 
 /**

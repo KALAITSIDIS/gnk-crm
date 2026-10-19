@@ -20,6 +20,10 @@ import {
 } from "@/lib/queries/contacts-list";
 import { formatDateTime } from "@/lib/utils/format";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Contacts · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Contacts" };
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 

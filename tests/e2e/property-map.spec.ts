@@ -233,7 +233,8 @@ test("the filters survive the trip from list to map", async ({ page }) => {
   expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual(filters);
   // the map names the filters it applies (not the sort: it has no order)
   await expect(page.getByTestId("properties-view-description")).toHaveText("Villa · For sale · plot ≥ 100 m²");
-  await expect(page).toHaveTitle("Properties map · Villa · For sale · plot ≥ 100 m²");
+  // the root layout's template adds the suffix, once (A08)
+  await expect(page).toHaveTitle("Properties map · Villa · For sale · plot ≥ 100 m² · GN REOS");
   // and the tab remembers the map as the last list view
   await expect
     .poll(() => page.evaluate(() => sessionStorage.getItem("gnk:properties:last")))

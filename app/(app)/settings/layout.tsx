@@ -3,6 +3,10 @@ import { SettingsNav } from "@/components/features/settings/settings-nav";
 import { SettingsSectionHeading } from "@/components/features/settings/settings-section-heading";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08) for every settings section: "Settings · GN REOS" through the root layout's template. */
+export const metadata: Metadata = { title: "Settings" };
 
 /**
  * Settings shell (T5.4, doc 05: admin area). UI gate here; every write is

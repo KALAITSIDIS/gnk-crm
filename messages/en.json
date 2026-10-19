@@ -96,13 +96,13 @@
         "todaysViewings": "Today's viewings",
         "tasksDue": "Tasks due today & overdue",
         "myLeads": "My open leads",
-        "hotIdle": "Hot buyers idle 3+ days"
+        "hotIdle": "Hot buyers — no logged contact in 3+ days"
       },
       "empty": {
         "noViewings": "Nothing scheduled today.",
         "noTasksDue": "Nothing due today.",
         "noLeads": "No open leads assigned to you.",
-        "hotAllTouched": "All hot buyers touched recently."
+        "hotAllContacted": "Every hot buyer has a logged contact in the last 3 days."
       },
       "actions": {
         "scheduleViewing": "Schedule a viewing",
@@ -110,8 +110,9 @@
         "leadInbox": "Open lead inbox"
       },
       "unanswered": "{count, plural, one {# unanswered} other {# unanswered}}",
-      "idleDays": "{days}d idle",
-      "noActivity": "no activity",
+      "lastLoggedDays": "last logged {days}d ago",
+      "neverLogged": "no logged contact yet",
+      "hotUnavailable": "Could not check when these buyers were last contacted — reload the page to try again.",
       "unnamed": "Unnamed",
       "kind": {
         "mandate_renewal": "Mandate renewal",

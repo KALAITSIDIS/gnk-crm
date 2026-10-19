@@ -58,7 +58,7 @@ test.describe("dashboard: My day, Team and the split feed (A01)", () => {
     expect(at(/^Pipeline by stage/)).toBeGreaterThan(at(/^Team$/));
     // the four My day cards are under the My day heading
     const myDay = page.getByRole("region", { name: "My day" });
-    for (const name of [/^Today's viewings/, /^Tasks due today & overdue/, /^My open leads/, /^Hot buyers idle/]) {
+    for (const name of [/^Today's viewings/, /^Tasks due today & overdue/, /^My open leads/, /^Hot buyers — no logged contact in 3\+ days/]) {
       await expect(myDay.getByRole("heading", { level: 3, name })).toHaveCount(1);
     }
     assertNoProblems(problems, "dashboard sections");

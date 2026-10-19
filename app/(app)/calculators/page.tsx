@@ -8,6 +8,10 @@ import { vatApplicability } from "@/lib/services/vat";
 import { createClient } from "@/lib/supabase/server";
 import { isGuid } from "@/lib/validators/ids";
 import { VAT_STATUS_LABELS } from "@/lib/validators/properties";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Calculators · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Calculators" };
 
 export const dynamic = "force-dynamic";
 

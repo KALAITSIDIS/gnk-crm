@@ -16,7 +16,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "GN Real Estate OS",
+  // A08: every page names itself in the tab — "Leads · GN REOS", "PAF0042 ·
+  // GN REOS" — so a row of tabs, the history and a bookmark say which screen
+  // each is. A page sets only its own words (a static `metadata`, or the
+  // property pages' generateMetadata); the suffix is added here, once. A page
+  // with no title of its own keeps the default. tests/unit/page-titles.test.ts
+  // pins both halves.
+  title: { default: "GN Real Estate OS", template: "%s · GN REOS" },
   description: "Internal real estate CRM — Kalaitsidis Capital",
   // B8: installable on an agent's phone. `apple-touch-icon` is a separate
   // mechanism from the manifest — iOS reads it and ignores manifest icons.

@@ -4,16 +4,33 @@ import { Flame } from "lucide-react";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
-import { readLastTouched } from "@/lib/services/entity-timeline";
+import { readLastLoggedContacts } from "@/lib/services/contact-activity-summary";
+
+const DAY_MS = 86_400_000;
+/** "3+ days" (T5.3, doc 05) */
+const IDLE_DAYS = 3;
+/** rows the card lists; the badge counts every idle buyer */
+const SHOWN = 8;
 
 /**
- * "Hot buyers idle 3+ days" (T5.3, doc 05), one of the My day cards (A01).
+ * "Hot buyers — no logged contact in 3+ days" (T5.3, doc 05), one of the My
+ * day cards (A01).
  *
- * Moved here VERBATIM from agent-dashboard.tsx when My day became shared by
- * the agent and admin dashboards: the queries, the 3-day rule and the
- * last-touched read are unchanged. What "touched" should mean (an event of
- * any kind, or a logged contact) is a separate, pending change — it is kept in
- * this one file so that change lands in one place.
+ * IDLE MEANS NO LOGGED CONTACT (A06 step 7): no logged conversation, call or
+ * "contacted" stamp on the buyer, a contact merged into them, their leads or
+ * the deals this viewer may read with them as a party, for three days. The
+ * card used to count ANY event on the contact (readLastTouched, removed): a
+ * WhatsApp-link click or a profile edit cleared "idle", and a call logged on
+ * the buyer's lead from the inbox — where the Contacted / Called / Log
+ * buttons file their events — or on their deal did not. A chat-link click
+ * opens WhatsApp and says nothing about a message being sent, so it never
+ * clears idle. The rule is the contact page strip's "Last logged contact"
+ * (lib/services/contact-activity-summary.ts), asked of every hot buyer at once.
+ *
+ * The badge is the number of idle buyers among those read (Card's contract:
+ * the count, not the list's length); the list shows the longest-idle first.
+ * A read that did not answer says so — never a list of everyone, never "all
+ * contacted".
  */
 export async function HotIdleCard({ profileId, level = 2 }: { profileId: string; level?: 2 | 3 }) {
   const t = await getTranslations("dashboard.myDay");
@@ -25,8 +42,8 @@ export async function HotIdleCard({ profileId, level = 2 }: { profileId: string;
   //      and is_archived = false;  (doc 05: hot BUYERS)
   const hotContactsRes = await supabase
     .from("contacts")
-    // org_id comes back so the last-touched read (which runs as the system)
-    // has an explicit org boundary taken from a row RLS already returned
+    // org_id comes back so the system-side events read has an explicit org
+    // boundary taken from a row RLS already returned
     .select("id, display_name, org_id")
     .eq("assigned_agent_id", profileId)
     .eq("temperature", "hot")
@@ -36,46 +53,38 @@ export async function HotIdleCard({ profileId, level = 2 }: { profileId: string;
     .limit(100);
   const hotContacts = unwrapRows(hotContactsRes, "hot contacts");
 
-  // Hot buyers idle ≥3 days: latest contact-scoped event per hot contact;
-  // SQL: select entity_id, max(occurred_at) from events where entity_type='contact'
-  //      and entity_id in (:hot_ids) group by entity_id;
-  //      idle = no event or max(occurred_at) < now() - interval '3 days'
-  //      (sampled over the 500 most recent events across the hot contacts)
-  const hotIds = hotContacts.map((c) => c.id);
   /*
-   * "Last touched" means by ANYONE, so this asks the system.
-   *
-   * `events_select` shows a non-admin only the rows they authored, so on the
-   * caller's client this computed "when did I last touch them" — and a contact
-   * a colleague rang yesterday still read as idle for three days. The desk's
-   * own tool then told this agent to ring a buyer who had just been rung,
-   * which is the duplicate-call failure a CRM exists to prevent.
-   *
-   * The ids are contacts assigned to this agent and read on their own client;
-   * the org comes from those same rows.
+   * "Logged contact" by ANYONE, so the events are read as the system: on the
+   * caller's client `events_select` shows a non-admin only the rows they
+   * authored, and a buyer a colleague rang yesterday would read as idle — the
+   * duplicate-call failure a CRM exists to prevent. The contacts are this
+   * agent's, read on their own client; their leads and deals are read on it
+   * too (inside the reader), and the org comes from those same rows.
    */
-  const hotEvents = await readLastTouched({
+  const logged = await readLastLoggedContacts({
     orgId: (hotContacts[0]?.org_id as string | undefined) ?? "",
-    entityType: "contact",
-    entityIds: hotIds,
-    limit: 500,
+    viewer: supabase,
+    contactIds: hotContacts.map((c) => c.id),
   });
-  const lastTouch = new Map<string, string>();
-  for (const e of hotEvents) {
-    if (e.entity_id && !lastTouch.has(e.entity_id)) lastTouch.set(e.entity_id, e.occurred_at);
+
+  if (!logged.ok) {
+    return (
+      <Card title={t("cards.hotIdle")} icon={<Flame className="size-4 text-danger" />} level={level}>
+        <CardEmpty text={t("hotUnavailable")} />
+      </Card>
+    );
   }
-  const idleCutoff = now.getTime() - 3 * 86_400_000;
+
+  const idleCutoff = now.getTime() - IDLE_DAYS * DAY_MS;
   const idleHot = hotContacts
     .map((c) => {
-      const last = lastTouch.get(c.id);
-      const idleDays = last
-        ? Math.floor((now.getTime() - new Date(last).getTime()) / 86_400_000)
-        : null;
-      return { ...c, idleDays, lastMs: last ? new Date(last).getTime() : 0 };
+      const last = logged.last.get(c.id);
+      const lastMs = last ? new Date(last).getTime() : 0;
+      return { ...c, lastMs, days: last ? Math.floor((now.getTime() - lastMs) / DAY_MS) : null };
     })
+    // never logged (0) first, then the longest since
     .filter((c) => c.lastMs < idleCutoff)
-    .sort((a, b) => a.lastMs - b.lastMs)
-    .slice(0, 8);
+    .sort((a, b) => a.lastMs - b.lastMs);
 
   return (
     <Card
@@ -85,10 +94,10 @@ export async function HotIdleCard({ profileId, level = 2 }: { profileId: string;
       level={level}
     >
       {idleHot.length === 0 ? (
-        <CardEmpty text={t("empty.hotAllTouched")} />
+        <CardEmpty text={t("empty.hotAllContacted")} />
       ) : (
         <ul className="flex flex-col divide-y divide-border/60 text-sm">
-          {idleHot.map((c) => (
+          {idleHot.slice(0, SHOWN).map((c) => (
             <li key={c.id}>
               <Link
                 href={`/contacts/${c.id}`}
@@ -96,7 +105,7 @@ export async function HotIdleCard({ profileId, level = 2 }: { profileId: string;
               >
                 <span className="truncate text-text-1">{c.display_name ?? t("unnamed")}</span>
                 <span className="shrink-0 text-xs tabular-nums text-text-3">
-                  {c.idleDays === null ? t("noActivity") : t("idleDays", { days: c.idleDays })}
+                  {c.days === null ? t("neverLogged") : t("lastLoggedDays", { days: c.days })}
                 </span>
               </Link>
             </li>

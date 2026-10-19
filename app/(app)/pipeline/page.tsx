@@ -14,6 +14,10 @@ import { healthAssessedLine, liveHealth } from "@/lib/services/health-score";
 import { mayMoveDeals } from "@/lib/services/pipeline-move";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 import { Button } from "@/components/ui/button";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Pipeline · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Pipeline" };
 
 export const dynamic = "force-dynamic";
 

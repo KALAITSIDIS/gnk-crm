@@ -26,6 +26,10 @@ import {
 } from "@/lib/validators/pagination";
 import { TASK_STAFF_ROLES, taskRights, type TaskAssignee } from "@/lib/validators/tasks";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Tasks · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Tasks" };
 
 export const dynamic = "force-dynamic";
 

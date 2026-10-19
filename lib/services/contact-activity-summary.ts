@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { LOGGED_CONTACT_TYPES } from "@/lib/services/activity-kinds";
 import { compareNewestFirst, idSlices } from "@/lib/services/entity-timeline";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 
 /**
  * The strip under a contact's name (A06): when the desk last RECORDED contact
@@ -267,4 +268,139 @@ export async function readContactActivitySummary(opts: {
     nextViewingOf(opts.viewer, opts.orgId, opts.contactId, opts.now),
   ]);
   return { lastContact, lastChatOpened, nextTask, nextViewing };
+}
+
+/** When each of several people was last LOGGED as contacted — or `{ ok: false }` when that could not be read. */
+export type LastLoggedContacts = { ok: true; last: Map<string, string> } | { ok: false };
+
+type LinkKind = "contact" | "lead" | "deal";
+
+/**
+ * THE AGENT DASHBOARD'S "Hot buyers — no logged contact in 3+ days" (A06 step
+ * 7): for each contact, the instant of the newest LOGGED contact — a logged
+ * conversation, a call, a "contacted" stamp (`LOGGED_CONTACT_TYPES`) — on the
+ * contact, on a contact merged into it, on its leads, or on the deals the
+ * viewer may read with it as buyer or seller. A contact with none is absent
+ * from the map.
+ *
+ * The strip's rule (`readContactActivitySummary`), asked of many people at
+ * once. The card used to ask "any event on the contact" (readLastTouched,
+ * removed): a WhatsApp-link click or a profile edit cleared "idle", while a
+ * call logged on the buyer's lead from the inbox, or on their deal, did not
+ * count. A chat-link click is never contact here either — it opens WhatsApp
+ * and says nothing about a message being sent.
+ *
+ * SAME CONTRACT AS THE STRIP. The person's other records are read on the
+ * VIEWER's client, so every id the system read is asked about is one RLS let
+ * them see — leads and contacts are org-readable, deals are what
+ * `deals_select` admits (an agent's own, or every deal for an admin or a
+ * listing manager): a call a colleague logged on a deal this agent cannot
+ * read does not count on THIS agent's card, as it does not on their strip.
+ * The events are read as the SYSTEM, org-bound (`events_select` shows a
+ * non-admin only their own rows — entity-timeline.ts), and only three
+ * columns of them.
+ *
+ * BOUNDED READS: every id list goes out in slices of IDS_PER_READ (the
+ * gateway's 414 at ~197 ids), and every read is paged (fetchAll — PostgREST
+ * cuts a read at 1,000 rows silently): a "no logged contact" must be true of
+ * every record the person has, not of the first thousand rows.
+ *
+ * NOTHING IS A ZERO. A read that did not answer makes the whole answer
+ * `{ ok: false }`: a card that then listed everyone as idle — or no one —
+ * would be a guess standing in for data that was not read.
+ */
+export async function readLastLoggedContacts(opts: {
+  /** the caller's org, from rows they read through RLS — never from user input */
+  orgId: string;
+  /** The VIEWER's own client — the person's leads and deals are read with their permissions. Never the admin client. */
+  viewer: Client;
+  /** contacts the CALLER read through RLS */
+  contactIds: readonly string[];
+}): Promise<LastLoggedContacts> {
+  const contacts = [...new Set(opts.contactIds)];
+  if (contacts.length === 0) return { ok: true, last: new Map() };
+  if (!opts.orgId) {
+    // the admin client's only boundary — loudly nothing, never quietly everything
+    console.error("last logged contact read refused: no org");
+    return { ok: false };
+  }
+  try {
+    // record id → the people (in `contacts`) it belongs to, per entity type
+    const owners: Record<LinkKind, Map<string, Set<string>>> = { contact: new Map(), lead: new Map(), deal: new Map() };
+    const own = (kind: LinkKind, recordId: string, contactId: string | null) => {
+      if (!contactId) return;
+      const set = owners[kind].get(recordId) ?? new Set<string>();
+      set.add(contactId);
+      owners[kind].set(recordId, set);
+    };
+    for (const c of contacts) own("contact", c, c);
+
+    // 1. as the VIEWER: each person's merged duplicates, leads and deals
+    const v = opts.viewer;
+    await Promise.all(
+      idSlices(contacts).flatMap((ids) => [
+        fetchAll(
+          (from, to) => v.from("contacts").select("id, merged_into_id").in("merged_into_id", ids).order("id").range(from, to),
+          "merged contacts",
+        ).then((rows) => rows.forEach((r) => own("contact", r.id, r.merged_into_id))),
+        fetchAll(
+          (from, to) => v.from("leads").select("id, contact_id").in("contact_id", ids).order("id").range(from, to),
+          "buyers' leads",
+        ).then((rows) => rows.forEach((r) => own("lead", r.id, r.contact_id))),
+        fetchAll(
+          (from, to) => v.from("deals").select("id, buyer_contact_id").in("buyer_contact_id", ids).order("id").range(from, to),
+          "buyers' deals",
+        ).then((rows) => rows.forEach((r) => own("deal", r.id, r.buyer_contact_id))),
+        fetchAll(
+          (from, to) => v.from("deals").select("id, seller_contact_id").in("seller_contact_id", ids).order("id").range(from, to),
+          "sellers' deals",
+        ).then((rows) => rows.forEach((r) => own("deal", r.id, r.seller_contact_id))),
+      ]),
+    );
+
+    // 2. as the SYSTEM, org-bound: every logged contact on those records
+    const admin = createAdminClient();
+    const asks = (["contact", "lead", "deal"] as const).flatMap((kind) =>
+      idSlices([...owners[kind].keys()]).map((ids) => ({ kind, ids })),
+    );
+    const answers = await Promise.all(
+      asks.map((a) =>
+        fetchAll(
+          (from, to) =>
+            admin
+              .from("events")
+              .select("id, entity_id, occurred_at")
+              // EXPLICIT — the admin client bypasses RLS, so this is the only org boundary
+              .eq("org_id", opts.orgId)
+              .eq("entity_type", a.kind)
+              .in("entity_id", a.ids)
+              .in("event_type", [...LOGGED_CONTACT_TYPES])
+              .order("id")
+              .range(from, to),
+          `logged contacts (${a.kind})`,
+        ).then((rows) => ({ kind: a.kind, rows })),
+      ),
+    );
+
+    const last = new Map<string, string>();
+    for (const { kind, rows } of answers) {
+      for (const r of rows) {
+        const people = r.entity_id ? owners[kind].get(r.entity_id) : undefined;
+        if (!people) continue;
+        const at = Date.parse(r.occurred_at);
+        if (!Number.isFinite(at)) continue;
+        for (const c of people) {
+          const prev = last.get(c);
+          if (prev === undefined || at > Date.parse(prev)) last.set(c, r.occurred_at);
+        }
+      }
+    }
+    return { ok: true, last };
+  } catch (e) {
+    console.error("last logged contact read failed:", {
+      count: contacts.length,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return { ok: false };
+  }
 }

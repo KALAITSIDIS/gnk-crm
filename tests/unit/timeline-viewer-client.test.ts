@@ -37,7 +37,7 @@ type Site = { file: string; call: string; arg: string; ok: boolean };
 
 function scan(file: string): Site[] {
   const text = readFileSync(file, "utf8");
-  if (!/readEntityTimeline|attachCurrentTitles|readContactActivitySummary/.test(text)) return [];
+  if (!/readEntityTimeline|attachCurrentTitles|readContactActivitySummary|readLastLoggedContacts/.test(text)) return [];
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const rel = relative(root, file).replace(/\\/g, "/");
 
@@ -71,10 +71,14 @@ function scan(file: string): Site[] {
     }
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
       const name = n.expression.text;
-      // the single reader, the combined feed (A06) and the contact summary
-      // strip, whose next task and next viewing are read on `viewer` (A06)
+      // the single reader, the combined feed (A06), the contact summary
+      // strip, whose next task and next viewing are read on `viewer` (A06),
+      // and the hot-buyers card's bulk twin, whose leads and deals are (A06 step 7)
       if (
-        (name === "readEntityTimeline" || name === "readEntityTimelines" || name === "readContactActivitySummary") &&
+        (name === "readEntityTimeline" ||
+          name === "readEntityTimelines" ||
+          name === "readContactActivitySummary" ||
+          name === "readLastLoggedContacts") &&
         n.arguments[0] &&
         ts.isObjectLiteralExpression(n.arguments[0])
       ) {
@@ -101,17 +105,22 @@ describe("every timeline title lookup is handed the viewer's session client", ()
   const sites = ["app", "components", "lib"].flatMap((d) => sources(join(root, d))).flatMap(scan);
 
   it("finds the call sites (a scanner that finds nothing proves nothing)", () => {
-    // each of the three record pages reads its timeline through one of the two
-    // readers — the contact page through the combined one since A06; a page
-    // moving from the single reader to the combined one keeps this honest
+    // each of the three record pages reads its Activity through the combined
+    // reader (A06: the contact page first, then the deal and the property) —
+    // and none of them through the single one any more
     for (const page of ["app/(app)/contacts/[id]/page.tsx", "app/(app)/deals/[id]/page.tsx", "app/(app)/properties/[id]/page.tsx"]) {
       expect(
-        sites.some((s) => s.file === page && (s.call === "readEntityTimeline" || s.call === "readEntityTimelines")),
-        `${page} reads its timeline`,
+        sites.some((s) => s.file === page && s.call === "readEntityTimelines"),
+        `${page} reads its Activity through readEntityTimelines`,
       ).toBe(true);
+      expect(sites.filter((s) => s.file === page && s.call === "readEntityTimeline"), `${page}: the single reader`).toEqual([]);
     }
-    expect(sites.filter((s) => s.call === "readEntityTimelines").length).toBeGreaterThanOrEqual(1);
+    expect(sites.filter((s) => s.call === "readEntityTimelines").length).toBeGreaterThanOrEqual(3);
     expect(sites.filter((s) => s.call === "readContactActivitySummary").length).toBeGreaterThanOrEqual(1);
+    expect(
+      sites.some((s) => s.file === "components/features/dashboard/hot-idle-card.tsx" && s.call === "readLastLoggedContacts"),
+      "the hot-buyers card reads its logged contacts",
+    ).toBe(true);
     // the admin feed 1, and the readers' own pass-throughs
     expect(sites.filter((s) => s.call === "attachCurrentTitles").length).toBeGreaterThanOrEqual(2);
   });

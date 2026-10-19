@@ -31,9 +31,10 @@ import { formatDateTime } from "@/lib/utils/format";
  * CURRENT feedback, labelled as such (lib/services/event-context.ts reads it
  * with the viewer's permissions), and then the caller's note.
  *
- * This plain list is the admin dashboard's "Latest events" (unfiltered, the
- * author already in its note) and the deal and property Activity tabs until
- * they adopt `ActivityFeed` below.
+ * This plain list is the admin dashboard's two feeds ("Latest sales activity",
+ * "Settings & admin changes": unfiltered, the author already in its note).
+ * Every record page — contact, deal, property — renders `ActivityFeed` below
+ * since A06.
  */
 export async function EventTimeline({
   events,
@@ -118,8 +119,11 @@ function sourceLabel(entityType: string, pageEntityType: string, t: EventTransla
  * is SAID ("Part of this history could not be loaded") rather than rendered as
  * a shorter history, and a feed cut at its cap says so too.
  *
- * Adopting it on another page (deal, property) is the reader call with that
- * page's sources and this component with that page's own entity type.
+ * Its pages and their sources: a contact (itself and what was merged into it,
+ * its leads, deals and viewings), a deal (itself, its offers, its viewings), a
+ * property (itself, its keys, its viewings) — each the reader call with that
+ * page's ids, read on the viewer's client, and this component with the page's
+ * own entity type.
  */
 export async function ActivityFeed({
   timeline,

@@ -27,7 +27,7 @@ import {
   MandatePanel,
   type MandateRow,
 } from "@/components/features/properties/mandate-panel";
-import { EventTimeline } from "@/components/features/shared/event-timeline";
+import { ActivityFeed } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { ListingReadiness } from "@/components/features/properties/listing-readiness";
 import { PropertySummary } from "@/components/features/properties/property-summary";
@@ -68,7 +68,8 @@ import { buildPropertyPortalRows } from "@/lib/services/portals/property-portals
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDate, formatDateTime } from "@/lib/utils/format";
-import { readEntityTimeline } from "@/lib/services/entity-timeline";
+import { readEntityTimelines } from "@/lib/services/entity-timeline";
+import { readRecordViewingIds } from "@/lib/queries/record-viewing-ids";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 
 /**
@@ -199,8 +200,7 @@ export default async function PropertyDetailPage({
   const keyIds = keyRows.map((k) => k.id);
   const [
     priceRes,
-    eventsRes,
-    keyEventsRes,
+    timeline,
     viewingsRes,
     documentsRes,
     reservationsRes,
@@ -216,31 +216,30 @@ export default async function PropertyDetailPage({
       .eq("property_id", id)
       .order("changed_at", { ascending: false })
       .limit(50),
-    // As the SYSTEM — see lib/services/entity-timeline.ts. The page has already
-    // read this property through RLS and notFound()s otherwise.
-    readEntityTimeline({
-      // the row's own org — the caller read it through RLS above, so this is
-      // provably their org, and it is available before `profile` is resolved
-      orgId: p.org_id as string,
-      viewerRole: profile.role,
-      viewer: supabase,
-      entityType: "property",
-      entityIds: [id],
-      limit: 50,
-    }).then((data) => ({ data, error: null })),
-    // this property's key movements belong on its activity trail (keys audit) —
-    // key events carry the key's id, so they need their own fetch
-    keyIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : readEntityTimeline({
-          orgId: p.org_id as string,
-          viewerRole: profile.role,
-          viewer: supabase,
-          entityType: "key",
-          // keyIds came from a keys read on the caller's own client
-          entityIds: keyIds,
-          limit: 20,
-        }).then((data) => ({ data, error: null })),
+    // Combined Activity (A06): the property, its keys' movements (keys audit —
+    // key events carry the key's id) and its viewings' events as ONE feed,
+    // read as the SYSTEM — see lib/services/entity-timeline.ts. The page has
+    // already read this property through RLS and notFound()s otherwise; the
+    // key ids came from the keys read on this client above, and the viewing
+    // ids are EVERY viewing of the property, read on this client too (paged;
+    // a failed page fails the page) — not the "upcoming" card's next ten. A
+    // signed slip's names are withheld from non-admins by the reader.
+    readRecordViewingIds(supabase, { column: "property_id", id }).then((viewingIds) =>
+      readEntityTimelines({
+        // the row's own org — the caller read it through RLS above, so this is
+        // provably their org
+        orgId: p.org_id as string,
+        viewerRole: profile.role,
+        viewer: supabase,
+        sources: [
+          { entityType: "property", entityIds: [id] },
+          { entityType: "key", entityIds: keyIds },
+          { entityType: "viewing", entityIds: viewingIds },
+        ],
+        perSource: 50,
+        limit: 100,
+      }),
+    ),
     supabase
       .from("viewings")
       .select("id, scheduled_at, duration_min, status, contacts(display_name), agent:profiles!agent_id(full_name)")
@@ -306,11 +305,6 @@ export default async function PropertyDetailPage({
       .limit(1),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
-  const propertyEventRows = unwrapRows(eventsRes, "events");
-  const keyEventRows = unwrapRows(keyEventsRes, "key events");
-  const eventRows = [...propertyEventRows, ...keyEventRows]
-    .sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1))
-    .slice(0, 50);
   const viewingRows = unwrapRows(viewingsRes, "viewings");
   const documentRows = unwrapRows(documentsRes, "documents");
   // a failed read throws to the boundary — never "None" for a read that did not answer
@@ -1046,7 +1040,7 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="activity" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <EventTimeline events={eventRows} />
+            <ActivityFeed timeline={timeline} pageEntityType="property" />
           </div>
         </TabsContent>
       </PropertyTabs>

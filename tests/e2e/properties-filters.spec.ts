@@ -154,10 +154,10 @@ test.describe("properties filters (A03)", () => {
     expect(params(page).get("district")).toBe(plot!.districtId);
     expect(params(page).get("type")).toBe("land");
 
-    // the view names itself, on the page and in the tab
+    // the view names itself, on the page and in the tab (the root layout adds " · GN REOS", A08)
     const words = "Paphos · Land · plot 1.500–6.000 m² · density ≥ 90%";
     await expect(page.getByTestId("properties-view-description")).toHaveText(words);
-    await expect(page).toHaveTitle(`Properties · ${words}`);
+    await expect(page).toHaveTitle(`Properties · ${words} · GN REOS`);
     await expect(page.getByText(LAND_NOTE)).toBeVisible();
     // the land table: Plot m² and Density in place of Area and Beds
     await expect(page.getByRole("columnheader", { name: /Plot m²/ })).toBeVisible();

@@ -8,6 +8,10 @@ import { EVIDENCE_REPORT_PATH_LIKE } from "@/lib/services/evidence-report-path";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Reports · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Reports" };
 
 export const dynamic = "force-dynamic";
 

@@ -21,6 +21,10 @@ import {
   pageSchema,
   totalPages as countPages,
 } from "@/lib/validators/pagination";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Deals · GN REOS" through the root layout's title template. */
+export const metadata: Metadata = { title: "Deals" };
 
 export const dynamic = "force-dynamic";
 

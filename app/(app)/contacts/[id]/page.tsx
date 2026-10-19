@@ -61,13 +61,22 @@ import { readContactActivitySummary } from "@/lib/services/contact-activity-summ
 import { proposalsForContact } from "@/lib/queries/proposals-sent";
 import { readContactHistoryIds } from "@/lib/queries/contact-history";
 import { ProposalsSentList } from "@/components/features/contacts/proposals-sent";
+import type { Metadata } from "next";
+
+/**
+ * The browser tab's name (A08): the generic word only — never the record's
+ * name or a person's, because tab titles land in browser history on shared
+ * devices. Static on purpose: no generateMetadata here (tests/unit/page-titles.test.ts).
+ */
+export const metadata: Metadata = { title: "Contact" };
 
 const TEMP_TONES: Record<string, string> = {
   hot: "bg-danger/10 text-danger",
   warm: "bg-warning/10 text-warning",
   cold: "bg-brand-100 text-brand-700",
   inactive: "bg-surface-2 text-text-3",
-  vip: "bg-accent-500/10 text-accent-500",
+  // bronze TEXT token on the bronze tint: accent-500 text measures 3.09:1 on white (A08); the fill stays accent-500
+  vip: "bg-accent-500/10 text-accent-700",
 };
 
 /**
