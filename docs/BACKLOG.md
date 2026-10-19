@@ -1458,8 +1458,8 @@ explicit direction.
   Media/Documents tabs are deep-linkable.~~ **DONE, in two parts.**
   **Sorting: 2026-10-18 — DECISIONS `T-crm-review-2026-10-18` (A03), branch
   `feat/crm-review-2026-10-18` (`f5186dc`), NOT YET MERGED:** `?sort=` newest
-  (the default, still exactly `created_at.desc,id.asc`), updated, price, plot
-  (land lists), score and reference, each both ways, on server-rendered table
+  (the default, still exactly `created_at.desc,id.asc`), updated (most recent
+  first only), and price, plot (land lists), score and reference, each both ways, on server-rendered table
   headers, and the CSV in the same order. **`?tab=`: LANDED 2026-10-18 with
   `T-portal-feed-integrity` (PR #175 → `9e16364`):** the property page's tabs
   follow `?tab=` (`PropertyTabs`), and the review's fix links use it.
@@ -5128,7 +5128,7 @@ Left open by `T-crm-review-2026-10-18`: another AI's read-only walkthrough of pr
 - **The property summary's Next action task is not a link, XS (waits on a task view).** (A08-P3) Tasks have no detail page, and `/tasks` lists the viewer's tasks only. **VERIFY:** `ls "app/(app)/tasks"` — no `[id]` means still blocked.
 - **The portal fixture holds a state the database can no longer hold, XS.** (F02) `lib/services/portals/dialects/__fixtures__/listings.ts:49` has `has_storage: true` with features lacking `storage_room`; since 0152 the trigger would make it false. Align it. **VERIFY:** `grep -n "has_storage: true" lib/services/portals/dialects/__fixtures__/listings.ts` — a hit beside features without `storage_room` means open.
 - **gnk-web: check two things the CRM's feed now means, S (gnk-web; not read from here).** (F01, F02) The site may print both `has_storage` and a `storage_room` feature label, which now always agree, so storage would read twice; and the feed carries the raw `vat_status` (0088), so any VAT wording on the site must treat `unknown` as not confirmed.
-- **NOTE — a new trigger on `properties` must update 0143's and 0152's expected trigger sets together.** Both preflights pin the full set of user triggers on the table (0152's restore-pack row too), and 0143's replay tests revert 0152 first (`supabase/tests/unit-status-actions.test.ts`, `backToBefore0143()`).
+- **NOTE — a new trigger on `properties` must update 0143's and 0152's expected trigger sets together.** Both preflights pin the full set of user triggers on the table (the restore pack's 0152 INTEGRITY row checks only 0152's own trigger, so it needs no update), and 0143's replay tests revert 0152 first (`supabase/tests/unit-status-actions.test.ts`, `backToBefore0143()`).
 - **NOTE — the map's "cannot draw" path is proven by a `getContext` stub, not a real GPU-less browser.** (F08) One manual check after the deploy: Chrome with `--disable-3d-apis`, `/properties/map`, expect the "This browser can't draw the map — WebGL2…" alert and the list. No test forces the pins worker to fail (it would need a stub MapLibre worker); `mapErrorOutcome`'s unit cases cover the rule. In Sentry a failed map is tagged `area=property-map` with its `stage`; a burst of `stage=style` means OpenFreeMap is down or the CSP lost its origin.
 
 **Follow-ups — deals and reports**
@@ -5190,3 +5190,5 @@ Left open by `T-crm-review-2026-10-18`: another AI's read-only walkthrough of pr
 - A04: counts of saved searches, website leads with a buyer brief and no saved search, share links by binding, and proposals holding listings that are not inventory or have limited visibility.
 - A08-P3 / A01: properties with no owner or developer, or no agent; leads by status, assignment and answered; the entity-type mix of the last 50 events.
 - A07: the Vercel production environment variable NAMES, never values (`RESEND_API_KEY`, `ENQUIRY_ALERT_TO`, `ENQUIRY_ALERT_FROM`, `SITE_REVALIDATE_URL` / `_KEY`, `IP_HASH_SALT`, `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `CRON_SECRET`, `ENQUIRY_FORWARD_KEY`), against what the overview should then say.
+- **Other list headers have never been measured at 390 px with data on the page, S.** (integration `9bf257f`) `/properties` and `/leads` overflowed only once their actions were all present; contacts, deals, tasks, keys, viewings and share-links have the same header shape. Sweep each with `assertNoHorizontalOverflow` and a `toBeInViewport()` on its primary action, with a row on the list. **VERIFY:** `grep -n "toBeInViewport" tests/e2e/phone-layout.spec.ts` — only properties and leads means open.
+- **NOTE — the properties table's photo column appears from 1680 px.** (A03) At a 1280 px desktop no list thumbnail is drawn or fetched, so the CSP test's Storage coverage goes through `?view=cards` (`csp.spec.ts`). If the desk wants thumbnails on ordinary laptops, that is a column-priority decision, not a CSP one.

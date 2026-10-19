@@ -167,6 +167,19 @@ describe("buildPortfolio", () => {
  * very units it is priced from, and counted archived records as inventory.
  */
 describe("buildPortfolio — the asking total (F04)", () => {
+  it("a row repeated across two read pages counts once — in the total, the unit count and the rollup", () => {
+    const project = row({ id: "p", reference: "PAF0002", kind: "project", developer_contact_id: DEV });
+    const unitA = row({ id: "u1", reference: "PAF0002-A1", kind: "unit", parent_id: "p", developer_contact_id: DEV, asking_price: 250000 });
+    const unitB = row({ id: "u2", reference: "PAF0002-A2", kind: "unit", parent_id: "p", developer_contact_id: DEV, asking_price: 250000 });
+    const flat = row({ id: "s", reference: "PAF0001", owner_contact_id: DEV, asking_price: 400000 });
+    // page 2 starts by repeating the last row of page 1 (a row inserted between the reads)
+    const portfolio = buildPortfolio([project, unitA, unitB, flat, unitB, flat], DEV);
+    expect(portfolio.totalValue).toBe(900000);
+    expect(portfolio.unitCount).toBe(2);
+    expect(portfolio.entries.map((e) => e.reference)).toEqual(["PAF0001", "PAF0002"]);
+    expect(portfolio.entries.find((e) => e.reference === "PAF0002")?.units?.value).toBe(500000);
+  });
+
   it("never adds a project's own 'from' price on top of its units", () => {
     // 300,000 from + 2 × 250,000 used to total 800,000
     const portfolio = buildPortfolio(

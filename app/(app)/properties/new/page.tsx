@@ -4,6 +4,10 @@ import { buildPropertySeed, type PropertySeed } from "@/lib/services/property-se
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "New property · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "New property" };
 
 export default async function NewPropertyPage({
   searchParams,

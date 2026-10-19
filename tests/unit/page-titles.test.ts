@@ -137,13 +137,50 @@ describe("a record page says what it is, never whose", () => {
   });
 });
 
+// The rest of the signed-in screens, each a generic word (the integration
+// review of 2026-10-19 found these eight reading the bare default).
+const OTHER_PAGES: [string, string][] = [
+  ["app/(app)/contacts/new/page.tsx", "New contact"],
+  ["app/(app)/properties/new/page.tsx", "New property"],
+  ["app/(app)/properties/worklist/page.tsx", "Listing worklist"],
+  ["app/(app)/properties/[id]/units/page.tsx", "Units"],
+  ["app/(app)/reports/commission-evidence/page.tsx", "Commission evidence"],
+  ["app/(app)/reports/performance/page.tsx", "Performance"],
+  ["app/(app)/security/page.tsx", "Security"],
+  ["app/(app)/viewings/[id]/sign/page.tsx", "Sign viewing slip"],
+];
+
+const files = (dir: string): string[] =>
+  readdirSync(join(root, dir)).flatMap((name) => {
+    const rel = `${dir}/${name}`;
+    if (statSync(join(root, rel)).isDirectory()) return files(rel);
+    return /^(page|layout)\.tsx$/.test(name) ? [rel] : [];
+  });
+
+describe("every other signed-in screen names itself too", () => {
+  it.each(OTHER_PAGES)("%s → %s, with no generateMetadata", (rel, want) => {
+    expect(titleOf(rel)).toBe(want);
+    expect(declaresGenerateMetadata(rel), `${rel} declares generateMetadata`).toBe(false);
+  });
+
+  it("no page under app/(app) is left on the bare default: each has a title of its own or from a layout above it", () => {
+    const titled = (rel: string) => titleOf(rel) !== null || declaresGenerateMetadata(rel);
+    const untitled: string[] = [];
+    for (const rel of files("app/(app)").filter((f) => f.endsWith("/page.tsx"))) {
+      let dir = dirname(rel);
+      let ok = titled(rel);
+      while (!ok && dir.startsWith("app/(app)/")) {
+        const layout = `${dir}/layout.tsx`;
+        ok = files(dir).includes(layout) && titleOf(layout) !== null;
+        dir = dirname(dir);
+      }
+      if (!ok) untitled.push(rel);
+    }
+    expect(untitled).toEqual([]);
+  });
+});
+
 describe("no page adds the suffix itself", () => {
-  const files = (dir: string): string[] =>
-    readdirSync(join(root, dir)).flatMap((name) => {
-      const rel = `${dir}/${name}`;
-      if (statSync(join(root, rel)).isDirectory()) return files(rel);
-      return /^(page|layout)\.tsx$/.test(name) ? [rel] : [];
-    });
 
   it("no title literal under app/ but the root layout's carries the product name", () => {
     const offenders: string[] = [];

@@ -129,7 +129,10 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   if (!isLocal() || !svc) return;
-  // events are append-only and stay; the rows they name go
+  // events are append-only and stay; the rows they name go — including the
+  // interaction_notes the real Log dialogs write (no FK to leads or contacts,
+  // so nothing cascades: lead-redaction.spec.ts deletes them the same way)
+  await svc.from("interaction_notes").delete().in("entity_id", [phoneLeadId, webLeadId, contactId].filter(Boolean));
   await svc.from("tasks").delete().in("lead_id", [phoneLeadId, webLeadId].filter(Boolean));
   await svc.from("leads").delete().in("id", [phoneLeadId, webLeadId].filter(Boolean));
   if (contactId) await svc.from("contacts").delete().eq("id", contactId);

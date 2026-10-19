@@ -4,6 +4,10 @@ import { QualityWorklist } from "@/components/features/properties/quality-workli
 import { Button } from "@/components/ui/button";
 import { fetchQualityWorklist } from "@/lib/queries/quality-worklist";
 import { createClient } from "@/lib/supabase/server";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Listing worklist · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "Listing worklist" };
 
 export const dynamic = "force-dynamic";
 

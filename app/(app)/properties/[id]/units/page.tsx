@@ -39,6 +39,10 @@ import { createClient } from "@/lib/supabase/server";
 import { isGuid } from "@/lib/validators/ids";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { fetchAll } from "@/lib/supabase/fetch-all";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Units · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "Units" };
 
 interface PriceListItemRow {
   unit_id: string;

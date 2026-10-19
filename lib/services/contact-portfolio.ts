@@ -173,7 +173,14 @@ const titleOf = (row: PortfolioRow) => (row.title as { en?: string } | null)?.en
  * no archived unit, so it appeared nowhere and the archived count was short.
  * It is grouped under its container instead, and counted.
  */
-export function buildPortfolio(rows: PortfolioRow[], contactId: string): Portfolio {
+export function buildPortfolio(pageRows: PortfolioRow[], contactId: string): Portfolio {
+  // Each row counts once. The contact page reads the portfolio in offset pages
+  // (fetchAll), and a page is its own snapshot: a property inserted or
+  // reassigned between two reads shifts the next page, which then repeats a row
+  // already read — counted twice in the total, the unit count and the rollups
+  // (integration review 2026-10-19; the sales-velocity and contact-history
+  // readers dedupe for the same reason).
+  const rows = [...new Map(pageRows.map((r) => [r.id, r])).values()];
   const live = rows.filter((r) => !isArchived(r));
   const liveById = new Map(live.map((r) => [r.id, r]));
   const byId = new Map(rows.map((r) => [r.id, r]));

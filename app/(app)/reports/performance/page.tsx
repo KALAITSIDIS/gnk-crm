@@ -24,6 +24,10 @@ import {
   type SourceRoiRow,
   type TimeToClose,
 } from "@/lib/services/report-export";
+import type { Metadata } from "next";
+
+/** The browser tab's name (A08): "Performance · GN REOS" through the root layout's title template — a generic word, never a name. */
+export const metadata: Metadata = { title: "Performance" };
 
 export const dynamic = "force-dynamic";
 
