@@ -55,6 +55,15 @@ const KIND_LABEL: Record<(typeof PROPERTY_KINDS)[number], string> = {
   unit: "Units only",
 };
 
+/** The default kind scope (no parameter): units left out, and the option says so (F04). */
+const KIND_DEFAULT_LABEL = "Listings & developments (no units)";
+
+/** The Kind trigger's words for a URL value — the same words its option shows. */
+function kindFilterLabel(kind: string | undefined): string {
+  if (kind === "all") return "All kinds";
+  return kind && kind in KIND_LABEL ? KIND_LABEL[kind as keyof typeof KIND_LABEL] : KIND_DEFAULT_LABEL;
+}
+
 /** The sorts in words. Price names the price it orders by (see `propertySortColumn`). */
 function sortLabel(sort: PropertySort, rent: boolean): string {
   const price = rent ? "Rent" : "Asking price";
@@ -105,13 +114,13 @@ const NUMBER_FILTERS: readonly NumberFilter[] = [
 
 /** Land (A03): the plot area and building density the land panel records. */
 const LAND_FILTERS: readonly NumberFilter[] = [
-  { key: "plot_min", label: "Plot area from (m²)", placeholder: "Plot m² ≥", width: "w-28", step: "any", land: true },
-  { key: "plot_max", label: "Plot area up to (m²)", placeholder: "Plot m² ≤", width: "w-28", step: "any", land: true },
+  { key: "plot_min", label: "Plot area from (m²)", placeholder: "Plot m² ≥", width: "w-24", step: "any", land: true },
+  { key: "plot_max", label: "Plot area up to (m²)", placeholder: "Plot m² ≤", width: "w-24", step: "any", land: true },
   {
     key: "density_min",
     label: "Building density at least (%)",
     placeholder: "Density % ≥",
-    width: "w-28",
+    width: "w-24",
     step: "any",
     land: true,
   },
@@ -408,10 +417,15 @@ export function PropertiesFilters({
             does not read shows the default, which is what the server applies. */}
         <Select value={shown.kind ?? ALL} onValueChange={(v) => setParams({ kind: v })}>
           <SelectTrigger className={selectClass} aria-label="Kind">
-            <SelectValue placeholder="Kind" />
+            {/* The label is rendered on the SERVER too: Radix fills an empty
+                SelectValue only after hydration, and this one is far wider
+                than the trigger's minimum, so the late fill wrapped the bar
+                onto another row and moved the list 44 px (mobile CLS 0.11
+                against main's 0.02, measured 2026-10-19). */}
+            <SelectValue placeholder="Kind">{kindFilterLabel(shown.kind)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>Listings &amp; developments (no units)</SelectItem>
+            <SelectItem value={ALL}>{KIND_DEFAULT_LABEL}</SelectItem>
             <SelectItem value="all">All kinds</SelectItem>
             {PROPERTY_KINDS.map((k) => (
               <SelectItem key={k} value={k}>
@@ -440,7 +454,7 @@ export function PropertiesFilters({
         {/* Land & plot (A03): "Paphos, plots of 1,500–6,000 m², density 90%
             or more" as filters — on the list, the map and the export alike,
             which share the one predicate builder. */}
-        <fieldset className="flex items-center gap-2">
+        <fieldset className="flex flex-wrap items-center gap-2">
           <legend className="sr-only">Land and plot</legend>
           {LAND_FILTERS.map(numberInput)}
         </fieldset>
@@ -473,7 +487,8 @@ export function PropertiesFilters({
           <Select value={shown.sort} onValueChange={(v) => setParams({ sort: v })}>
             <SelectTrigger className={selectClass} aria-label="Sort">
               <ArrowDownUp className="size-3.5 text-text-3" />
-              <SelectValue />
+              {/* server-rendered for the same reason as Kind's */}
+              <SelectValue>{sortLabel(shown.sort, shown.transaction === "rent")}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {PROPERTY_SORTS.map((s) => (

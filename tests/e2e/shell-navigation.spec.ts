@@ -61,24 +61,32 @@ async function tabTo(page: Page, target: Locator, max = 80): Promise<void> {
  * the `* { outline-ring/50 }` colour to its focus colour over 150 ms, so a read
  * taken on the frame of the Tab press is a mid-fade mix (measured 2026-10-19:
  * oklab(… / 0.52) one frame in, rgb(255, 255, 255) once settled). It waits for
- * the element's running transitions, but no longer than FADE_CAP_MS — a fade
- * slower than that is read mid-way and fails the colour check.
+ * the element's running transitions to FINISH (their own `finished` promise,
+ * not a wall-clock guess: on a loaded machine a 150 ms transition took longer
+ * than a 300 ms cap and was read at 97% white, 2026-10-19), bounded only by
+ * WAIT_CAP_MS against a transition that never ends. That the fade itself is
+ * short is checked separately: every transition's declared duration must be
+ * at most FADE_MAX_MS.
  */
-const FADE_CAP_MS = 300;
+const WAIT_CAP_MS = 5000;
+const FADE_MAX_MS = 300;
 
 async function focusStyle(target: Locator) {
   return target.evaluate(async (el, capMs) => {
-    const settled = Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
+    const running = el.getAnimations();
+    const longestFadeMs = Math.max(0, ...running.map((a) => Number(a.effect?.getTiming().duration) || 0));
+    const settled = Promise.all(running.map((a) => a.finished.catch(() => undefined)));
     await Promise.race([settled, new Promise((resolve) => setTimeout(resolve, capMs))]);
     const s = getComputedStyle(el);
     return {
+      longestFadeMs,
       focusVisible: el.matches(":focus-visible"),
       outlineStyle: s.outlineStyle,
       outlineWidth: parseFloat(s.outlineWidth),
       outlineColor: s.outlineColor,
       boxShadow: s.boxShadow,
     };
-  }, FADE_CAP_MS);
+  }, WAIT_CAP_MS);
 }
 
 /**
@@ -153,6 +161,7 @@ test.describe("[A08] the main nav says where you are", () => {
     expect(s.focusVisible, "Tab focus matches :focus-visible").toBe(true);
     expect(s.outlineStyle).toBe("solid");
     expect(s.outlineWidth).toBeGreaterThanOrEqual(2);
+    expect(s.longestFadeMs, "the focus fade is short").toBeLessThanOrEqual(FADE_MAX_MS);
     expect(s.outlineColor, "white on --brand-950, not --ring").toBe(WHITE);
   });
 
@@ -187,6 +196,7 @@ test.describe("[A08] focus outline on light surfaces", () => {
     expect(t.focusVisible).toBe(true);
     expect(t.outlineStyle).toBe("solid");
     expect(t.outlineWidth).toBeGreaterThanOrEqual(2);
+    expect(t.longestFadeMs, "the focus fade is short").toBeLessThanOrEqual(FADE_MAX_MS);
     expect(t.outlineColor).toBe(RING);
   });
 });
@@ -251,6 +261,7 @@ test.describe("[A08] global search on every width", () => {
         const s = await focusStyle(target);
         expect(s.focusVisible).toBe(true);
         expect(s.outlineStyle).toBe("solid");
+        expect(s.longestFadeMs, "the focus fade is short").toBeLessThanOrEqual(FADE_MAX_MS);
         expect(s.outlineColor).toBe(RING);
         expect(await outlineClipping(target), "no clipping ancestor cuts the outline").toEqual([]);
       }
