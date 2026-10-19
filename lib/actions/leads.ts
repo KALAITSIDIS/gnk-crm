@@ -590,20 +590,24 @@ export async function redactLead(leadId: string): Promise<{ error: string | null
  * is one sentence, because its words would describe the schema. Once the
  * row is pending again the worker is kicked for THAT lead after the answer,
  * exactly as the enquiry route does — the sweep would get to it anyway.
+ *
+ * THE REFUSAL IS RETURNED, NOT THROWN: Next replaces a thrown error's message
+ * in production ("An error occurred in the Server Components render…"), so a
+ * thrown refusal never reached the person it was written for.
  */
-export async function retryEnquiryAlert(leadId: string): Promise<void> {
-  if (!isGuid(leadId)) throw new Error("Lead not found");
+export async function retryEnquiryAlert(leadId: string): Promise<{ error: string | null }> {
+  if (!isGuid(leadId)) return { error: "Lead not found" };
   const supabase = await createClient();
   await getCurrentProfile(supabase);
 
   const { data, error } = await supabase.rpc("request_enquiry_alert_retry", { p_lead_id: leadId });
   if (error) {
     // P0001 is `raise exception` — the function's own words, meant to be read.
-    if (error.code === "P0001") throw new Error(error.message);
-    throw new Error("Could not queue the alert — try again, and tell an admin if it keeps failing.");
+    if (error.code === "P0001") return { error: error.message };
+    return { error: "Could not queue the alert — try again, and tell an admin if it keeps failing." };
   }
   const job = data?.[0];
-  if (!job) throw new Error("No desk alert is recorded for this lead.");
+  if (!job) return { error: "No desk alert is recorded for this lead." };
 
   after(async () => {
     await runEnquiryAlertWorker(createAdminClient(), {
@@ -619,6 +623,7 @@ export async function retryEnquiryAlert(leadId: string): Promise<void> {
     });
   });
   revalidatePath("/leads");
+  return { error: null };
 }
 
 const recoverEscalationSchema = z.object({
@@ -640,10 +645,15 @@ export type RecoverEscalationInput = z.input<typeof recoverEscalationSchema>;
  * same provider key while it is safe, `resend` under a new key only when it
  * is not. The browser supplies nothing but the job id and the action; every
  * fact is derived server-side. The worker is then kicked for THAT job.
+ *
+ * Its refusals are RETURNED, as retryEnquiryAlert's are: a thrown message is
+ * replaced by Next in production, and the admin would read a generic failure
+ * instead of the database's sentence ("use Retry, which cannot send a second
+ * copy").
  */
-export async function recoverLeadEscalation(input: RecoverEscalationInput): Promise<void> {
+export async function recoverLeadEscalation(input: RecoverEscalationInput): Promise<{ error: string | null }> {
   const parsed = recoverEscalationSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid input.");
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const { jobId, action } = parsed.data;
 
   const supabase = await createClient();
@@ -655,11 +665,11 @@ export async function recoverLeadEscalation(input: RecoverEscalationInput): Prom
   });
   if (error) {
     // P0001 is `raise exception` — the function's own words, meant to be read.
-    if (error.code === "P0001") throw new Error(error.message);
-    throw new Error("Could not queue the escalation — try again, and tell an admin if it keeps failing.");
+    if (error.code === "P0001") return { error: error.message };
+    return { error: "Could not queue the escalation — try again, and tell an admin if it keeps failing." };
   }
   const job = data?.[0];
-  if (!job) throw new Error("No escalation is recorded for this job.");
+  if (!job) return { error: "No escalation is recorded for this job." };
 
   after(async () => {
     await runEnquiryAlertWorker(createAdminClient(), {
@@ -672,6 +682,7 @@ export async function recoverLeadEscalation(input: RecoverEscalationInput): Prom
     });
   });
   revalidatePath("/leads");
+  return { error: null };
 }
 
 export async function claimLead(leadId: string): Promise<void> {

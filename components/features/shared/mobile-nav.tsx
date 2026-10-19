@@ -61,7 +61,9 @@ export function MobileNav({ appName }: { appName: string }) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="text-white/70 hover:bg-brand-900 hover:text-white"
+                // the Button's own focus ring (ring/50) is near-invisible on navy, and its
+                // outline-none beats the drawer's white outline rule: say white here
+                className="text-white/70 hover:bg-brand-900 hover:text-white focus-visible:border-white focus-visible:ring-white"
                 onClick={() => setOpen(false)}
                 aria-label="Close menu"
               >

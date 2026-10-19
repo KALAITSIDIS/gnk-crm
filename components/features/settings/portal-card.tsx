@@ -308,7 +308,8 @@ export function PortalCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-text-1">{portal.name}</h2>
+          {/* an <h3>: the Portals section's <h2> is drawn by the settings layout (A08) */}
+          <h3 className="text-sm font-semibold text-text-1">{portal.name}</h3>
           <p className="mt-1 text-sm text-text-2">{portal.audience}</p>
           <p className="mt-1 text-xs text-text-3">
             Format: {portal.dialect} · requests {portal.pullCadence} ·{" "}

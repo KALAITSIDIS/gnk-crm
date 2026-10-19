@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -208,5 +208,47 @@ describe("the keyboard-focus outline (A08) is visible where it is drawn", () => 
     // and the general colour would NOT have been enough there — the reason
     // the navy rule exists (brand-500 on brand-900 measures under 3:1)
     expect(contrast(resolveHex("ring"), resolveHex("brand-900"))).toBeLessThan(3);
+  });
+});
+
+describe("white words never sit on the bronze FILL (--accent-500)", () => {
+  // The pressed Floors / Villas toggle (wizard and unit generator) and the
+  // Cover chip on a photograph were white on --accent-500: 3.09:1. They sit
+  // on --accent-700 now; a fill under words must clear 4.5:1 like any text.
+  const sources = (dir: string): string[] => {
+    return readdirSync(dir).flatMap((name) => {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) return sources(p);
+      return name.endsWith(".tsx") ? [p] : [];
+    });
+  };
+
+  it("white on --accent-700 reads (4.5:1); white on --accent-500 does not", () => {
+    expect(contrast("#FFFFFF", resolveHex("accent-700"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#FFFFFF", resolveHex("accent-500"))).toBeLessThan(4.5);
+  });
+
+  it("no class string pairs bg-accent-500 with text-white", () => {
+    const offenders: string[] = [];
+    for (const file of [...sources(join(root, "app")), ...sources(join(root, "components"))]) {
+      for (const m of readFileSync(file, "utf-8").matchAll(/"([^"\n]*)"/g)) {
+        const cls = m[1].split(/\s+/);
+        if (cls.includes("bg-accent-500") && cls.includes("text-white")) offenders.push(`${file.slice(root.length + 1)}: ${m[1]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("the drawer's Close menu button shows its focus on navy", () => {
+  it("names a white ring — the Button's ring/50 is near-invisible on --brand-950, and its outline-none beats the drawer rule", () => {
+    const src = readFileSync(join(root, "components", "features", "shared", "mobile-nav.tsx"), "utf-8");
+    // the LAST "Close menu" is the drawer's Button (the first is the backdrop)
+    const at = src.lastIndexOf('aria-label="Close menu"');
+    const before = src.slice(Math.max(0, at - 600), at);
+    expect(before.slice(before.lastIndexOf("<")), "the drawer's Close menu Button").toMatch(/^<Button\b/);
+    const cls = [...before.matchAll(/className="([^"]*)"/g)].at(-1)?.[1] ?? "";
+    expect(cls.split(/\s+/)).toEqual(expect.arrayContaining(["focus-visible:ring-white", "focus-visible:border-white"]));
+    expect(contrast("#FFFFFF", resolveHex("brand-950"))).toBeGreaterThanOrEqual(3);
   });
 });

@@ -32,10 +32,12 @@ export function DeskAlertChip({ leadId, job }: { leadId: string; job: DeskAlertJ
   const retry = () =>
     startTransition(async () => {
       try {
-        await retryEnquiryAlert(leadId);
-        toast.success("Desk alert queued — sending now");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not retry the alert");
+        // the database's refusal comes back as an answer — a thrown message is redacted by Next
+        const { error } = await retryEnquiryAlert(leadId);
+        if (error) toast.error(error);
+        else toast.success("Desk alert queued — sending now");
+      } catch {
+        toast.error("Could not retry the alert — reload the page and try again.");
       }
     });
 

@@ -110,9 +110,10 @@ export function NudgeThresholdsPanel({
             call, not this page's. Health counts `last_activity_at` (any saved
             change); the chase-up counts `last_contact_at` (0025). */}
         <section className="rounded-[10px] border border-border bg-surface-2 p-4">
-          <h2 className="text-sm font-semibold text-text-1">
+          {/* an <h3>: the section's own <h2> is drawn by the settings layout (A08) */}
+          <h3 className="text-sm font-semibold text-text-1">
             This does not change how deals are scored
-          </h2>
+          </h3>
           <p className="mt-1 text-xs text-text-2">
             Deal health scores activity on a fixed scale — full marks within 7 days of the
             deal&rsquo;s last activity, half within 14, none after that — worked out afresh every

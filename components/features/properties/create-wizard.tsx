@@ -1066,7 +1066,7 @@ export function CreatePropertyWizard({
                       aria-pressed={genLayout === mode}
                       className={
                         genLayout === mode
-                          ? "rounded-[6px] bg-accent-500 px-2 py-1 font-medium text-white"
+                          ? "rounded-[6px] bg-accent-700 px-2 py-1 font-medium text-white"
                           : "rounded-[6px] px-2 py-1 text-text-2 hover:bg-surface-2"
                       }
                     >

@@ -58,21 +58,27 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
   const retry = () =>
     startTransition(async () => {
       try {
-        await recoverLeadEscalation({ jobId: job.id, action: "retry" });
-        toast.success("Escalation queued — sending now");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not retry the escalation");
+        // the database's refusal comes back as an answer — a thrown message is redacted by Next
+        const { error } = await recoverLeadEscalation({ jobId: job.id, action: "retry" });
+        if (error) toast.error(error);
+        else toast.success("Escalation queued — sending now");
+      } catch {
+        toast.error("Could not retry the escalation — reload the page and try again.");
       }
     });
 
   const resend = () =>
     startTransition(async () => {
       try {
-        await recoverLeadEscalation({ jobId: job.id, action: "resend" });
+        const { error } = await recoverLeadEscalation({ jobId: job.id, action: "resend" });
+        if (error) {
+          toast.error(error);
+          return;
+        }
         setOpen(false);
         toast.success("New copy of the escalation queued — sending now");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not send a new copy of the escalation");
+      } catch {
+        toast.error("Could not send a new copy of the escalation — reload the page and try again.");
       }
     });
 

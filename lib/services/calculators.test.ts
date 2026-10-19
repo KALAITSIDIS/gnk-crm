@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   buildStampSummary,
@@ -7,6 +10,7 @@ import {
   computeTransferScenario,
   parseStampDutyConfig,
   parseTransferFeesConfig,
+  reliefLabel,
   SUMMARY_SCENARIO,
   VAT_SCENARIO_LABELS,
   VAT_SCENARIOS,
@@ -318,5 +322,36 @@ describe("buildStampSummary (F01 moved it out of the component)", () => {
         expect(lines.filter((l) => l.startsWith("Scenario: ")), s).toEqual([`Scenario: ${SUMMARY_SCENARIO[s]}`]);
       }
     }
+  });
+});
+
+describe("the relief rate is the config's, everywhere it is said (guardrail 5)", () => {
+  // a desk that changes relief_pct in Settings must see the new rate in the
+  // label and in the pasted quote, not a "50%" written into the code
+  const FORTY: TransferFeesConfig = { ...TRANSFER, relief_pct: 0.4 };
+
+  it("the result carries the rate it applied", () => {
+    const r = computeTransferFees(300000, FORTY, { relief: true, subjectToVat: false });
+    expect(r.gross).toBe(17200);
+    expect(r.reliefPct).toBe(0.4);
+    expect(r.reliefAmount).toBe(6880);
+    expect(r.total).toBe(10320);
+    expect(computeTransferFees(300000, FORTY, { relief: true, subjectToVat: true }).reliefPct).toBe(0.4);
+  });
+
+  it("the copied summary names that rate", () => {
+    const s = computeTransferScenario(300000, FORTY, { relief: true, purchasers: 1, scenario: "does_not_apply" });
+    const text = buildTransferSummary(300000, s, meta());
+    expect(text).toContain("40% relief: −€6.880");
+    expect(text).not.toContain("50%");
+    expect(reliefLabel(0.5)).toBe("50% relief");
+  });
+
+  it("the calculators screen writes no rate of its own", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "components", "features", "calculators", "calculators-client.tsx"), "utf-8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(/\d+\s?% relief/);
+    expect(src).toMatch(/reliefLabel\(/);
   });
 });

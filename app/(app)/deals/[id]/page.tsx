@@ -21,6 +21,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { isGuid } from "@/lib/validators/ids";
 import { dealValue, dealValueIsFinal } from "@/lib/services/deal-value";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,7 @@ export default async function DealDetailPage({
   const headerValue = dealValue(deal);
   const headerIsFinal = dealValueIsFinal(deal);
 
-  const [{ data: stage }, { data: offerRows }, { data: nudgeCfg }] = await Promise.all([
+  const [{ data: stage }, offersRes, { data: nudgeCfg }] = await Promise.all([
     supabase
       .from("deal_stages")
       .select("id, name, is_won, is_lost")
@@ -78,7 +79,9 @@ export default async function DealDetailPage({
       .eq("key", "nudge_thresholds")
       .maybeSingle(),
   ]);
-  const offers = offerRows ?? [];
+  // A failed read is the page's failure, not "no offers": the Offers card,
+  // Won-eligibility and the Activity feed's offer lines all stand on it.
+  const offers = unwrapRows(offersRes, "deal offers");
 
   const contactIds = [
     deal.buyer_contact_id,

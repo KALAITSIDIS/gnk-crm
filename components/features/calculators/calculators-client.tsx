@@ -11,6 +11,7 @@ import {
   computeStampDuty,
   computeTransferScenario,
   pct,
+  reliefLabel,
   VAT_SCENARIO_LABELS,
   VAT_SCENARIOS,
   type BandRow,
@@ -85,7 +86,7 @@ function Breakdown({
         </div>
         {result.reliefApplied ? (
           <div className="flex justify-between">
-            <dt className="text-text-2">50% relief</dt>
+            <dt className="text-text-2">{reliefLabel(result.reliefPct)}</dt>
             <dd className="tabular-nums text-success">−{formatMoney(result.reliefAmount)}</dd>
           </div>
         ) : null}
@@ -303,7 +304,8 @@ export function CalculatorsClient({
                     disabled={reliefMoot}
                     onCheckedChange={(v) => setRelief(v === true)}
                   />
-                  Apply 50% relief (transfers not subject to VAT)
+                  {/* the rate the arithmetic applies, from the config (guardrail 5) */}
+                  Apply {reliefLabel(transferConfig.relief_pct)} (transfers not subject to VAT)
                 </label>
                 {reliefMoot ? (
                   <p className="pl-6 text-xs text-text-3">

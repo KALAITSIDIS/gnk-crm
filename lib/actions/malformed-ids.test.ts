@@ -123,7 +123,8 @@ const CASES: Case[] = [
   {
     name: "retryEnquiryAlert",
     bad: (bad) => leads.retryEnquiryAlert(bad),
-    refusal: { thrown: "Lead not found" },
+    // returned since its refusals stopped being thrown (Next redacts them)
+    refusal: { value: { error: "Lead not found" } },
     good: (id) => leads.retryEnquiryAlert(id),
   },
   {

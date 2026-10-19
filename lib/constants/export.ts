@@ -16,7 +16,7 @@ const TOO_MANY = `More than ${EXPORT_CEILING.toLocaleString("en-GB")} records ma
 /** Past the ceiling, on a list whose filters can narrow it. */
 export const EXPORT_TOO_MANY_MESSAGE = `${TOO_MANY} Nothing was downloaded — narrow the filters and export again.`;
 
-/** Past the ceiling, on a list with no filters (a deal pipeline, My tasks, Viewings): say what CAN be done. */
+/** Past the ceiling, on a list with no filters (a deal pipeline, Viewings): say what CAN be done. My tasks is filterable now and gets the narrowing message. */
 export const EXPORT_TOO_MANY_UNFILTERED_MESSAGE =
   `${TOO_MANY} Nothing was downloaded — this list has no filters to narrow it; ask an administrator for a full data export.`;
 

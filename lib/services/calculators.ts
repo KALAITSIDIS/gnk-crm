@@ -176,6 +176,12 @@ export interface TransferFeesResult {
   gross: number;
   reliefApplied: boolean;
   reliefAmount: number;
+  /**
+   * The share of the gross the relief removes — `cyprus_config.transfer_fees
+   * .relief_pct`, carried so every label and summary says the rate the
+   * arithmetic used (guardrail 5: never a hardcoded "50%").
+   */
+  reliefPct: number;
   vatExempt: boolean;
   total: number;
 }
@@ -216,6 +222,7 @@ export function computeTransferFees(
       gross: 0,
       reliefApplied: false,
       reliefAmount: 0,
+      reliefPct: config.relief_pct,
       vatExempt: true,
       total: 0,
     };
@@ -234,6 +241,7 @@ export function computeTransferFees(
     gross,
     reliefApplied: opts.relief,
     reliefAmount,
+    reliefPct: config.relief_pct,
     vatExempt: false,
     total: round2(gross - reliefAmount),
   };
@@ -347,6 +355,11 @@ export function pct(rate: number): string {
   return `${(rate * 100).toLocaleString("en-GB", { maximumFractionDigits: 2 })}%`;
 }
 
+/** "50% relief" — the rate from the config (`relief_pct`), never written into a label. */
+export function reliefLabel(reliefPct: number): string {
+  return `${pct(reliefPct)} relief`;
+}
+
 export function bandLabel(b: BandRow): string {
   return b.to === null
     ? `above ${formatMoney(b.from)}`
@@ -382,7 +395,7 @@ function breakdownLines(price: number, r: TransferFeesResult, totalLabel: string
           `× ${r.purchasers} purchasers = ${formatMoney(r.gross)}`,
         ]
       : [`Gross: ${formatMoney(r.gross)}`]),
-    ...(r.reliefApplied ? [`50% relief: −${formatMoney(r.reliefAmount)}`] : []),
+    ...(r.reliefApplied ? [`${reliefLabel(r.reliefPct)}: −${formatMoney(r.reliefAmount)}`] : []),
     `${totalLabel}: ${formatMoney(r.total)}`,
   ];
 }

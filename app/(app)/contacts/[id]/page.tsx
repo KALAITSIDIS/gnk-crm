@@ -54,6 +54,7 @@ import {
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 import { isGuid } from "@/lib/validators/ids";
 import { formatDateTime } from "@/lib/utils/format";
 import { CUSTOMER_FEED_SKIPPED_TYPES, readEntityTimelines } from "@/lib/services/entity-timeline";
@@ -118,7 +119,7 @@ export default async function ContactDetailPage({
     { data: areaRows },
     mergedRes,
     { data: profileRows },
-    { data: portfolioRows },
+    portfolioRows,
     { data: districtRows },
     requirementsRes,
   ] =
@@ -129,10 +130,25 @@ export default async function ContactDetailPage({
       supabase.from("profiles").select("id, full_name, is_active, role").order("full_name"),
       // audit finding 9: what this contact owns or built. One query, both party
       // columns — a developer is usually both on the units it has not sold.
-      supabase
-        .from("properties")
-        .select(PORTFOLIO_SELECT)
-        .or(`owner_contact_id.eq.${id},developer_contact_id.eq.${id}`),
+      // EVERY row, paged: a developer's units pass 1,000, where PostgREST cuts
+      // a read silently and the totals would be short. A failed page fails the
+      // page — never "Nothing recorded against this contact" for a read that
+      // did not answer (unwrapRows routes PGRST303 to the session-clock page).
+      fetchAll(
+        async (from, to) => ({
+          data: unwrapRows(
+            await supabase
+              .from("properties")
+              .select(PORTFOLIO_SELECT)
+              .or(`owner_contact_id.eq.${id},developer_contact_id.eq.${id}`)
+              .order("id")
+              .range(from, to),
+            "contact portfolio",
+          ),
+          error: null,
+        }),
+        "contact portfolio",
+      ),
       supabase.from("districts").select("id, name").order("sort_order"),
       // 0043 saved searches, newest first; archived ones come too and the card
       // splits them, so retiring a search never hides that it existed
@@ -348,7 +364,7 @@ export default async function ContactDetailPage({
   // shows it as the placeholder under each blank field
   const officeDefaults = isParty ? (await getPartyDefaults(null)).defaults : {};
 
-  const portfolio = buildPortfolio(portfolioRows ?? [], id);
+  const portfolio = buildPortfolio(portfolioRows, id);
 
   // `?tab=` (A04): a known tab this contact HAS, else Profile
   const initialTab =

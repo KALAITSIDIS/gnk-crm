@@ -147,13 +147,11 @@ describe("every settings section opens with an <h2> naming it", () => {
     // Rendered on /security, not under the settings layout: their <h2> IS
     // that page's section heading.
     const notUnderSettings = new Set(["security-panel.tsx", "change-password-form.tsx"]);
-    // Known residue, other owners' files in the 2026-10-18 review: the
-    // deal-health note's <h2> (stream D edits that copy) and each portal
-    // card's <h2> (the portal session). Each is a one-word h2 -> h3.
-    const residue = new Set(["nudge-thresholds-panel.tsx", "portal-card.tsx"]);
+    // (The deal-health note and the portal cards were the last two, demoted at
+    // integration: no residue is excused any more.)
     const dir = join(root, "components", "features", "settings");
     const offenders = readdirSync(dir)
-      .filter((f) => f.endsWith(".tsx") && !notUnderSettings.has(f) && !residue.has(f))
+      .filter((f) => f.endsWith(".tsx") && !notUnderSettings.has(f))
       .filter((f) => /<h2[\s>]/.test(code(readFileSync(join(dir, f), "utf8"))))
       .filter((f) => f !== "settings-section-heading.tsx");
     const pages = readdirSync(join(root, "app", "(app)", "settings"), { recursive: true, encoding: "utf8" })
